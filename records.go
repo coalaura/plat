@@ -34,6 +34,17 @@ func (r Record) FullName(zoneName string) string {
 	return r.Name + "." + zoneName
 }
 
+func (r Record) UnmarshalYAML(unmarshal func(any) error) error {
+	err := unmarshal(&r)
+	if err != nil {
+		return err
+	}
+
+	r.ID = FreeId()
+
+	return nil
+}
+
 func FromLibdns(lr libdns.Record) Record {
 	rr := lr.RR()
 
