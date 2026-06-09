@@ -3,7 +3,11 @@ import "../css/plat.css";
 const app = document.getElementById("app");
 
 const TOKEN_KEY = "plat-token";
+const THEME_KEY = "plat-theme";
 const ROOT_LABEL = "@";
+const DEFAULT_THEME = "dark";
+const EMPTY = "--";
+const HASH_PREFIX = "#";
 
 const RECORD_TYPES = [
 	"A",
@@ -31,6 +35,7 @@ const RECORD_TYPES = [
 
 let state = {
 	token: sessionStorage.getItem(TOKEN_KEY) || "",
+	theme: localStorage.getItem(THEME_KEY) || DEFAULT_THEME,
 	authenticated: false,
 	zones: [],
 	activeZone: "",
@@ -52,37 +57,143 @@ function make(tag, ...classes) {
 	return el;
 }
 
+function randomId() {
+	if (window.crypto && window.crypto.getRandomValues) {
+		const values = new Uint32Array(4);
+		window.crypto.getRandomValues(values);
+		return Array.from(values, (value) => value.toString(16).padStart(8, "0")).join("");
+	}
+
+	return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function quote(value) {
+	if (!value) {
+		return "\"\"";
+	}
+
+	const clean = String(value).trim().replace(/"/g, '\\"');
+
+	if (clean.startsWith("\"") && clean.endsWith("\"")) {
+		return clean;
+	}
+
+	return `"${clean}"`;
+}
+
+function unquote(value) {
+	const text = String(value || "").trim();
+	if (!text) {
+		return "";
+	}
+
+	if (text.startsWith("\"") && text.endsWith("\"") && text.length >= 2) {
+		return text.slice(1, -1).replace(/\\"/g, '"');
+	}
+
+	return text;
+}
+
+function splitTokens(value) {
+	const text = String(value || "").trim();
+	if (!text) {
+		return [];
+	}
+
+	const matches = text.match(/"(?:\\"|[^"])*"|\S+/g);
+	return matches || [];
+}
+
+function parseByParts(value, keys) {
+	const parts = splitTokens(value).map(unquote);
+	const result = {};
+
+	for (let index = 0; index < keys.length; index += 1) {
+		result[keys[index]] = parts[index] || "";
+	}
+
+	return result;
+}
+
+function parseWithRemainder(value, headKeys, tailKey) {
+	const tokens = splitTokens(value);
+	const result = {};
+
+	for (let index = 0; index < headKeys.length; index += 1) {
+		result[headKeys[index]] = unquote(tokens[index] || "");
+	}
+
+	const rest = tokens.slice(headKeys.length).join(" ");
+	result[tailKey] = unquote(rest);
+
+	return result;
+}
+
+function parseLoc(value) {
+	const parts = splitTokens(value).map(unquote);
+	return {
+		lat: parts.slice(0, 4).join(" "),
+		lng: parts.slice(4, 8).join(" "),
+		alt: parts[8] || "",
+		size: parts[9] || "",
+		hPrec: parts[10] || "",
+		vPrec: parts[11] || "",
+	};
+}
+
+function parseRecordValue(type, value) {
+	const text = String(value || "").trim();
+	const config = recordTypeConfig(type);
+
+	try {
+		const parsed = config.parse(text);
+		if (parsed && typeof parsed === "object") {
+			return parsed;
+		}
+	} catch {
+		return {};
+	}
+
+	return {};
+}
+
 function recordTypeConfig(type) {
 	const map = {
 		A: {
 			description: "IPv4 address.",
 			fields: [{ key: "address", label: "IPv4", placeholder: "203.0.113.5", required: true, hint: "A single IPv4 address." }],
 			build: (data) => data.address,
+			parse: (value) => ({ address: value }),
 		},
 		AAAA: {
 			description: "IPv6 address.",
 			fields: [{ key: "address", label: "IPv6", placeholder: "2001:db8::5", required: true, hint: "A single IPv6 address." }],
 			build: (data) => data.address,
+			parse: (value) => ({ address: value }),
 		},
 		CNAME: {
 			description: "Alias to another hostname.",
-			fields: [{ key: "target", label: "Target", placeholder: "service.example.net.", required: true, hint: "Canonical target hostname." }],
+			fields: [{ key: "target", label: "Target", placeholder: "service.example.net.", required: true, hint: "Canonical target hostname.", wide: true }],
 			build: (data) => data.target,
+			parse: (value) => ({ target: value }),
 		},
 		NS: {
 			description: "Delegated authoritative nameserver.",
 			fields: [{ key: "host", label: "Nameserver", placeholder: "ns1.example.net.", required: true, hint: "Nameserver hostname." }],
 			build: (data) => data.host,
+			parse: (value) => ({ host: value }),
 		},
 		PTR: {
 			description: "Reverse DNS pointer target.",
 			fields: [{ key: "target", label: "Target", placeholder: "host.example.com.", required: true, hint: "Hostname returned by reverse lookup." }],
 			build: (data) => data.target,
+			parse: (value) => ({ target: value }),
 		},
 		TXT: {
 			description: "Arbitrary text payload.",
-			fields: [{ key: "text", label: "Text", placeholder: "v=spf1 include:_spf.example.com ~all", required: true, hint: "Use raw text value." }],
+			fields: [{ key: "text", label: "Text", placeholder: "v=spf1 include:_spf.example.com ~all", required: true, hint: "Use raw text value.", multiline: true, wide: true, rows: 4 }],
 			build: (data) => data.text,
+			parse: (value) => ({ text: unquote(value) }),
 		},
 		MX: {
 			description: "Mail exchanger with priority.",
@@ -91,6 +202,7 @@ function recordTypeConfig(type) {
 				{ key: "exchange", label: "Exchange", placeholder: "mail.example.com.", required: true, hint: "Mail server hostname." },
 			],
 			build: (data) => `${data.priority} ${data.exchange}`,
+			parse: (value) => parseByParts(value, ["priority", "exchange"]),
 		},
 		CAA: {
 			description: "Certificate Authority Authorization policy.",
@@ -100,6 +212,7 @@ function recordTypeConfig(type) {
 				{ key: "value", label: "Value", placeholder: "letsencrypt.org", required: true, hint: "CA domain or reporting URL." },
 			],
 			build: (data) => `${data.flags} ${data.tag} ${quote(data.value)}`,
+			parse: (value) => parseWithRemainder(value, ["flags", "tag"], "value"),
 		},
 		SRV: {
 			description: "Service location details.",
@@ -110,6 +223,7 @@ function recordTypeConfig(type) {
 				{ key: "target", label: "Target", placeholder: "service.example.com.", required: true, hint: "Destination hostname." },
 			],
 			build: (data) => `${data.priority} ${data.weight} ${data.port} ${data.target}`,
+			parse: (value) => parseByParts(value, ["priority", "weight", "port", "target"]),
 		},
 		URI: {
 			description: "Service URI with priority and weight.",
@@ -119,6 +233,7 @@ function recordTypeConfig(type) {
 				{ key: "target", label: "Target URI", placeholder: "https://example.com/api", required: true, hint: "Quoted URI target." },
 			],
 			build: (data) => `${data.priority} ${data.weight} ${quote(data.target)}`,
+			parse: (value) => parseWithRemainder(value, ["priority", "weight"], "target"),
 		},
 		TLSA: {
 			description: "TLS certificate association data.",
@@ -129,6 +244,7 @@ function recordTypeConfig(type) {
 				{ key: "data", label: "Certificate Data", placeholder: "aabbcc...", required: true, hint: "Hex encoded association data." },
 			],
 			build: (data) => `${data.usage} ${data.selector} ${data.matching} ${data.data}`,
+			parse: (value) => parseByParts(value, ["usage", "selector", "matching", "data"]),
 		},
 		SSHFP: {
 			description: "SSH fingerprint metadata.",
@@ -138,6 +254,7 @@ function recordTypeConfig(type) {
 				{ key: "fingerprint", label: "Fingerprint", placeholder: "ab12...", required: true, hint: "Hex encoded fingerprint." },
 			],
 			build: (data) => `${data.algorithm} ${data.fpType} ${data.fingerprint}`,
+			parse: (value) => parseByParts(value, ["algorithm", "fpType", "fingerprint"]),
 		},
 		DNSKEY: {
 			description: "DNSSEC public key material.",
@@ -148,6 +265,7 @@ function recordTypeConfig(type) {
 				{ key: "publicKey", label: "Public Key", placeholder: "AwEAA...", required: true, hint: "Base64 public key data." },
 			],
 			build: (data) => `${data.flags} ${data.protocol} ${data.algorithm} ${data.publicKey}`,
+			parse: (value) => parseByParts(value, ["flags", "protocol", "algorithm", "publicKey"]),
 		},
 		DS: {
 			description: "Delegation Signer digest.",
@@ -158,6 +276,7 @@ function recordTypeConfig(type) {
 				{ key: "digest", label: "Digest", placeholder: "ab12...", required: true, hint: "Hex digest string." },
 			],
 			build: (data) => `${data.keyTag} ${data.algorithm} ${data.digestType} ${data.digest}`,
+			parse: (value) => parseByParts(value, ["keyTag", "algorithm", "digestType", "digest"]),
 		},
 		NAPTR: {
 			description: "Regex-based rewrite rules.",
@@ -170,6 +289,7 @@ function recordTypeConfig(type) {
 				{ key: "replacement", label: "Replacement", placeholder: "_sip._udp.example.com.", required: true, hint: "Target replacement domain." },
 			],
 			build: (data) => `${data.order} ${data.preference} ${quote(data.flags)} ${quote(data.service)} ${quote(data.regexp || "")} ${data.replacement}`,
+			parse: (value) => parseByParts(value, ["order", "preference", "flags", "service", "regexp", "replacement"]),
 		},
 		CERT: {
 			description: "Certificate record payload.",
@@ -180,11 +300,13 @@ function recordTypeConfig(type) {
 				{ key: "certificate", label: "Certificate", placeholder: "MIIB...", required: true, hint: "Base64 certificate data." },
 			],
 			build: (data) => `${data.certType} ${data.keyTag} ${data.algorithm} ${data.certificate}`,
+			parse: (value) => parseByParts(value, ["certType", "keyTag", "algorithm", "certificate"]),
 		},
 		OPENPGPKEY: {
 			description: "OpenPGP public key packet.",
-			fields: [{ key: "packet", label: "Public Key Packet", placeholder: "mQENBF...", required: true, hint: "Base64 encoded packet body." }],
+			fields: [{ key: "packet", label: "Public Key Packet", placeholder: "mQENBF...", required: true, hint: "Base64 encoded packet body.", multiline: true, wide: true, rows: 5 }],
 			build: (data) => data.packet,
+			parse: (value) => ({ packet: value }),
 		},
 		SMIMEA: {
 			description: "S/MIME certificate association.",
@@ -195,6 +317,7 @@ function recordTypeConfig(type) {
 				{ key: "data", label: "Certificate Data", placeholder: "aabb...", required: true, hint: "Hex association data." },
 			],
 			build: (data) => `${data.usage} ${data.selector} ${data.matching} ${data.data}`,
+			parse: (value) => parseByParts(value, ["usage", "selector", "matching", "data"]),
 		},
 		LOC: {
 			description: "Geographic location.",
@@ -207,6 +330,7 @@ function recordTypeConfig(type) {
 				{ key: "vPrec", label: "Vert Precision", placeholder: "10m", required: false, hint: "Optional vertical precision." },
 			],
 			build: (data) => [data.lat, data.lng, data.alt, data.size, data.hPrec, data.vPrec].filter(Boolean).join(" "),
+			parse: (value) => parseLoc(value),
 		},
 		HTTPS: {
 			description: "HTTPS service binding (SVCB alias mode or service mode).",
@@ -216,6 +340,7 @@ function recordTypeConfig(type) {
 				{ key: "params", label: "Svc Params", placeholder: "alpn=\"h3,h2\" ipv4hint=203.0.113.5", required: false, hint: "Space-separated key=value parameters." },
 			],
 			build: (data) => [data.priority, data.target, data.params].filter(Boolean).join(" "),
+			parse: (value) => parseWithRemainder(value, ["priority", "target"], "params"),
 		},
 		SVCB: {
 			description: "Generic service binding record.",
@@ -225,28 +350,16 @@ function recordTypeConfig(type) {
 				{ key: "params", label: "Svc Params", placeholder: "alpn=\"h2\" port=443", required: false, hint: "Space-separated key=value parameters." },
 			],
 			build: (data) => [data.priority, data.target, data.params].filter(Boolean).join(" "),
+			parse: (value) => parseWithRemainder(value, ["priority", "target"], "params"),
 		},
 	};
 
 	return map[type] || {
 		description: "Raw record value.",
-		fields: [{ key: "value", label: "Value", placeholder: "", required: true, hint: "Raw record value." }],
+		fields: [{ key: "value", label: "Value", placeholder: "", required: true, hint: "Raw record value.", multiline: true, wide: true, rows: 4 }],
 		build: (data) => data.value,
+		parse: (value) => ({ value }),
 	};
-}
-
-function quote(value) {
-	if (!value) {
-		return "\"\"";
-	}
-
-	const clean = String(value).trim().replace(/\"/g, '\\"');
-
-	if (clean.startsWith("\"") && clean.endsWith("\"")) {
-		return clean;
-	}
-
-	return `"${clean}"`;
 }
 
 function normalizeZone(zone) {
@@ -257,10 +370,44 @@ function zoneDisplay(zone) {
 	return zone.endsWith(".") ? zone.slice(0, -1) : zone;
 }
 
+function zoneFromHash() {
+	const raw = window.location.hash.startsWith(HASH_PREFIX) ? window.location.hash.slice(1) : "";
+	if (!raw) {
+		return "";
+	}
+
+	try {
+		return normalizeZone(decodeURIComponent(raw));
+	} catch {
+		return "";
+	}
+}
+
+function setZoneHash(zone) {
+	if (!zone) {
+		if (window.location.hash) {
+			history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+		}
+		return;
+	}
+
+	const nextHash = `${HASH_PREFIX}${encodeURIComponent(zoneDisplay(zone))}`;
+	if (window.location.hash !== nextHash) {
+		history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
+	}
+}
+
 function setStatus(message, isError) {
 	state.message = isError ? "" : message;
 	state.error = isError ? message : "";
 	render();
+}
+
+function applyTheme() {
+	const theme = state.theme === "light" ? "light" : "dark";
+	document.documentElement.setAttribute("data-theme", theme);
+	state.theme = theme;
+	localStorage.setItem(THEME_KEY, theme);
 }
 
 async function api(path, options = {}) {
@@ -315,7 +462,10 @@ async function checkInfo() {
 		return;
 	}
 
-	if (!state.activeZone || !state.zones.includes(state.activeZone)) {
+	const hashZone = zoneFromHash();
+	if (hashZone && state.zones.includes(hashZone)) {
+		state.activeZone = hashZone;
+	} else if (!state.activeZone || !state.zones.includes(state.activeZone)) {
 		state.activeZone = state.zones[0];
 	}
 
@@ -335,6 +485,7 @@ async function loadZone(zone) {
 		const records = await api(`/-/${encodeURIComponent(normalizeZone(zone))}`);
 		state.records = Array.isArray(records) ? records : [];
 		state.activeZone = zone;
+		setZoneHash(zone);
 		state.message = "";
 		state.error = "";
 	} catch (err) {
@@ -379,17 +530,17 @@ async function saveRecord(record, isUpdate) {
 	await loadZone(state.activeZone);
 }
 
-async function deleteRecord(recordName) {
-	await api(`/-/${encodeURIComponent(normalizeZone(state.activeZone))}/${encodeURIComponent(recordName)}`, {
+async function deleteRecord(record) {
+	await api(`/-/${encodeURIComponent(normalizeZone(state.activeZone))}/${encodeURIComponent(record.id)}`, {
 		method: "DELETE",
 	});
 
-	setStatus(`Deleted ${recordName}.`, false);
+	setStatus(`Deleted ${record.name} (${record.type}).`, false);
 	await loadZone(state.activeZone);
 }
 
-function parseFormRecord(formData) {
-	const mode = formData.get("mode");
+function parseFormRecord(formData, currentRecord) {
+	const mode = String(formData.get("mode") || "typed");
 	const type = String(formData.get("type") || "A").toUpperCase();
 	const name = String(formData.get("name") || "").trim();
 	const ttl = Number.parseInt(String(formData.get("ttl") || "1"), 10);
@@ -427,6 +578,7 @@ function parseFormRecord(formData) {
 	}
 
 	return {
+		id: currentRecord?.id || randomId(),
 		type,
 		name,
 		value,
@@ -435,15 +587,19 @@ function parseFormRecord(formData) {
 }
 
 function makeField(field, current) {
-	const wrap = make("label", "field");
+	const wrap = make("label", "field", field.wide ? "field-wide" : "");
 	const title = make("span", "field-title");
 	const hint = make("span", "field-hint");
-	const input = make("input", "input");
+	const input = make(field.multiline ? "textarea" : "input", "input", field.multiline ? "textarea" : "");
 
 	title.textContent = field.label;
 	hint.textContent = field.hint || "";
 
-	input.type = "text";
+	if (!field.multiline) {
+		input.type = "text";
+	} else {
+		input.rows = field.rows || 3;
+	}
 	input.name = `field_${field.key}`;
 	input.placeholder = field.placeholder || "";
 	input.value = current?.[field.key] || "";
@@ -472,8 +628,6 @@ function openRecordModal(currentRecord) {
 	const submitButton = make("button", "button");
 	const cancelButton = make("button", "ghost");
 
-	const modeDefault = currentRecord ? "raw" : "typed";
-
 	title.textContent = currentRecord ? "Edit record" : "Create record";
 	closeButton.type = "button";
 	closeButton.textContent = "Close";
@@ -487,7 +641,7 @@ function openRecordModal(currentRecord) {
 	modeRaw.textContent = "Raw value";
 	modeSelect.name = "mode";
 	modeSelect.append(modeTyped, modeRaw);
-	modeSelect.value = modeDefault;
+	modeSelect.value = "typed";
 
 	rawTitle.textContent = "Raw value";
 	rawHint.textContent = "Direct record value string sent to backend.";
@@ -552,8 +706,27 @@ function openRecordModal(currentRecord) {
 	overlay.append(modal);
 	document.body.append(overlay);
 
-	const close = () => {
-		overlay.remove();
+	let typedCache = parseRecordValue(typeInput.value, rawInput.value);
+
+	const collectTypedFields = () => {
+		const config = recordTypeConfig(typeInput.value);
+		const values = {};
+		for (const field of config.fields) {
+			const input = form.elements.namedItem(`field_${field.key}`);
+			values[field.key] = input ? String(input.value || "").trim() : "";
+		}
+		return values;
+	};
+
+	const syncRawFromTyped = () => {
+		const config = recordTypeConfig(typeInput.value);
+		const values = collectTypedFields();
+		typedCache = values;
+		rawInput.value = config.build(values).trim();
+	};
+
+	const syncTypedFromRaw = () => {
+		typedCache = parseRecordValue(typeInput.value, rawInput.value);
 	};
 
 	const renderTypeFields = () => {
@@ -562,12 +735,16 @@ function openRecordModal(currentRecord) {
 		typedDescription.textContent = config.description;
 
 		for (const field of config.fields) {
-			dynamicSection.append(makeField(field));
+			dynamicSection.append(makeField(field, typedCache));
 		}
 
 		rawWrap.classList.toggle("hidden", modeSelect.value !== "raw");
 		dynamicSection.classList.toggle("hidden", modeSelect.value !== "typed");
 		typedDescription.classList.toggle("hidden", modeSelect.value !== "typed");
+	};
+
+	const close = () => {
+		overlay.remove();
 	};
 
 	closeButton.addEventListener("click", close);
@@ -578,14 +755,35 @@ function openRecordModal(currentRecord) {
 		}
 	});
 
-	modeSelect.addEventListener("change", renderTypeFields);
-	typeInput.addEventListener("change", renderTypeFields);
+	modeSelect.addEventListener("change", () => {
+		if (modeSelect.value === "raw") {
+			syncRawFromTyped();
+		} else {
+			syncTypedFromRaw();
+		}
+		renderTypeFields();
+	});
+
+	typeInput.addEventListener("change", () => {
+		if (modeSelect.value === "raw") {
+			syncTypedFromRaw();
+		} else {
+			typedCache = collectTypedFields();
+		}
+		renderTypeFields();
+	});
 
 	form.addEventListener("submit", async (event) => {
 		event.preventDefault();
 
 		try {
-			const record = parseFormRecord(new FormData(form));
+			if (modeSelect.value === "raw") {
+				syncTypedFromRaw();
+			} else {
+				syncRawFromTyped();
+			}
+
+			const record = parseFormRecord(new FormData(form), currentRecord);
 			await saveRecord(record, Boolean(currentRecord));
 			close();
 		} catch (err) {
@@ -608,6 +806,13 @@ function createHeader() {
 	titleWrap.append(title, subtitle);
 	head.append(titleWrap);
 
+	const controls = make("div", "top-controls");
+	const theme = make("button", "ghost");
+	theme.type = "button";
+	theme.textContent = state.theme === "dark" ? "Light mode" : "Dark mode";
+	theme.addEventListener("click", onThemeToggleClick);
+	controls.append(theme);
+
 	if (state.authenticated) {
 		const auth = make("div", "auth-chip");
 		const text = make("span", "mono");
@@ -619,8 +824,10 @@ function createHeader() {
 		logout.addEventListener("click", onLogoutClick);
 
 		auth.append(text, logout);
-		head.append(auth);
+		controls.append(auth);
 	}
+
+	head.append(controls);
 
 	return head;
 }
@@ -689,11 +896,73 @@ function createZones() {
 		const button = make("button", "zone-item", zone === state.activeZone ? "active" : "");
 		button.type = "button";
 		button.textContent = zoneDisplay(zone);
+		button.title = zoneDisplay(zone);
 		button.addEventListener("click", () => onZoneClick(zone));
 		list.append(button);
 	}
 
 	return panel;
+}
+
+function createCell(text, classes = []) {
+	const td = make("td", ...classes);
+	td.textContent = text;
+	if (text && text !== EMPTY) {
+		td.title = text;
+	}
+	return td;
+}
+
+function displayRecordName(record, zone) {
+	if (record.name === ROOT_LABEL) {
+		return zoneDisplay(zone);
+	}
+
+	return record.name;
+}
+
+function recordTags(record) {
+	if (Array.isArray(record.tags) && record.tags.length) {
+		return record.tags.join(", ");
+	}
+
+	if (typeof record.tags === "string" && record.tags.trim()) {
+		return record.tags.trim();
+	}
+
+	return EMPTY;
+}
+
+function recordDetails(record) {
+	const parts = splitTokens(record.value).map(unquote);
+
+	switch (record.type) {
+		case "MX":
+			return parts[0] ? `priority ${parts[0]}` : EMPTY;
+		case "SRV":
+			if (parts.length >= 3) {
+				return `prio ${parts[0]} weight ${parts[1]} port ${parts[2]}`;
+			}
+			return EMPTY;
+		case "URI":
+			if (parts.length >= 2) {
+				return `prio ${parts[0]} weight ${parts[1]}`;
+			}
+			return EMPTY;
+		case "CAA":
+			if (parts.length >= 2) {
+				return `flags ${parts[0]} tag ${parts[1]}`;
+			}
+			return EMPTY;
+		case "TLSA":
+		case "SMIMEA":
+			if (parts.length >= 3) {
+				return `u ${parts[0]} s ${parts[1]} m ${parts[2]}`;
+			}
+			return EMPTY;
+		default:
+			return EMPTY;
+	}
 }
 
 function createRecords() {
@@ -703,7 +972,9 @@ function createRecords() {
 	const actions = make("div", "actions");
 	const sync = make("button", "ghost");
 	const add = make("button", "button");
+	const tableWrap = make("div", "table-wrap");
 	const table = make("table", "record-table");
+	const colgroup = make("colgroup");
 	const head = make("thead");
 	const body = make("tbody");
 
@@ -723,14 +994,19 @@ function createRecords() {
 	top.append(title, actions);
 	panel.append(top);
 
+	for (const colClass of ["col-name", "col-type", "col-content", "col-ttl", "col-tags", "col-details", "col-actions"]) {
+		const col = make("col", colClass);
+		colgroup.append(col);
+	}
+
 	const headRow = make("tr");
-	for (const label of ["Name", "Type", "Value", "TTL", ""]) {
+	for (const label of ["Name", "Type", "Content", "TTL", "Tags", "Details", "Actions"]) {
 		const th = make("th");
 		th.textContent = label;
 		headRow.append(th);
 	}
 	head.append(headRow);
-	table.append(head, body);
+	table.append(colgroup, head, body);
 
 	if (!state.activeZone) {
 		const empty = make("p", "empty");
@@ -748,18 +1024,19 @@ function createRecords() {
 
 	for (const record of state.records) {
 		const row = make("tr");
-		const name = make("td", "mono");
-		const type = make("td", "mono");
-		const value = make("td", "value");
-		const ttl = make("td", "mono");
-		const controls = make("td", "row-actions");
+		const controls = make("td", "row-actions", "w-actions");
 		const edit = make("button", "ghost");
 		const del = make("button", "ghost", "danger");
 
-		name.textContent = record.name;
-		type.textContent = record.type;
-		value.textContent = record.value;
-		ttl.textContent = `${record.ttl}s`;
+		row.append(
+			createCell(displayRecordName(record, state.activeZone), ["mono", "w-name"]),
+			createCell(record.type, ["mono", "w-type"]),
+			createCell(record.value, ["value", "w-content"]),
+			createCell(record.ttl ? `${record.ttl}s` : "auto", ["mono", "w-ttl"]),
+			createCell(recordTags(record), ["w-tags"]),
+			createCell(recordDetails(record), ["mono", "w-details"]),
+		);
+
 		edit.type = "button";
 		edit.textContent = "Edit";
 		del.type = "button";
@@ -769,14 +1046,15 @@ function createRecords() {
 		del.addEventListener("click", () => onDeleteRecordClick(record));
 
 		controls.append(edit, del);
-		row.append(name, type, value, ttl, controls);
+		row.append(controls);
 		body.append(row);
 	}
 
-	panel.append(table);
+	tableWrap.append(table);
+	panel.append(tableWrap);
 
 	const note = make("p", "note");
-	note.textContent = "Current backend stores one record per name in each zone.";
+	note.textContent = "Delete and update actions now target the record id.";
 	panel.append(note);
 
 	return panel;
@@ -790,6 +1068,8 @@ function createAuthed() {
 
 function render() {
 	app.replaceChildren();
+	applyTheme();
+
 	const shell = make("main", "shell");
 
 	shell.append(createHeader(), createStatus());
@@ -824,6 +1104,11 @@ async function onLoginSubmit(event) {
 	}
 }
 
+function onThemeToggleClick() {
+	state.theme = state.theme === "dark" ? "light" : "dark";
+	render();
+}
+
 function onLogoutClick() {
 	state.token = "";
 	state.authenticated = false;
@@ -833,6 +1118,7 @@ function onLogoutClick() {
 	state.message = "";
 	state.error = "";
 	sessionStorage.removeItem(TOKEN_KEY);
+	setZoneHash("");
 	render();
 }
 
@@ -847,6 +1133,19 @@ async function onReloadInfoClick() {
 
 async function onZoneClick(zone) {
 	await loadZone(zone);
+}
+
+async function onHashChange() {
+	if (!state.authenticated) {
+		return;
+	}
+
+	const hashZone = zoneFromHash();
+	if (!hashZone || hashZone === state.activeZone || !state.zones.includes(hashZone)) {
+		return;
+	}
+
+	await loadZone(hashZone);
 }
 
 async function onSyncClick() {
@@ -868,13 +1167,15 @@ async function onDeleteRecordClick(record) {
 	}
 
 	try {
-		await deleteRecord(record.name);
+		await deleteRecord(record);
 	} catch (err) {
 		setStatus(err.message, true);
 	}
 }
 
 async function init() {
+	window.addEventListener("hashchange", onHashChange);
+
 	render();
 
 	if (!state.token) {
