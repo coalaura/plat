@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strconv"
 	"time"
 
 	"github.com/libdns/libdns"
@@ -39,30 +38,11 @@ func FromLibdns(lr libdns.Record) Record {
 	rr := lr.RR()
 
 	return Record{
-		ID: RecordFnvHash(rr.Type, rr.Name),
+		ID: FreeId(),
 
 		Type:  rr.Type,
 		Name:  rr.Name,
 		Value: rr.Data,
 		TTL:   int64(rr.TTL.Seconds()),
 	}
-}
-
-func RecordFnvHash(typ, name string) string {
-	var hash uint64 = 1099511628211
-
-	for i := range typ {
-		hash ^= uint64(typ[i])
-		hash *= 14695981039346656037
-	}
-
-	hash ^= uint64('_')
-	hash *= 14695981039346656037
-
-	for i := range name {
-		hash ^= uint64(name[i])
-		hash *= 14695981039346656037
-	}
-
-	return strconv.FormatUint(hash, 16)
 }
