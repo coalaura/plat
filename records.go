@@ -15,13 +15,21 @@ type Record struct {
 	TTL   int64  `yaml:"ttl,omitempty"`
 }
 
-func (cr Record) ToLibdns() libdns.Record {
+func (r Record) ToLibdns() libdns.Record {
 	return libdns.RR{
-		Type: cr.Type,
-		Name: cr.Name,
-		Data: cr.Value,
-		TTL:  time.Duration(cr.TTL) * time.Second,
+		Type: r.Type,
+		Name: r.Name,
+		Data: r.Value,
+		TTL:  time.Duration(r.TTL) * time.Second,
 	}
+}
+
+func (r Record) FullName(zoneName string) string {
+	if r.Name == "@" {
+		return zoneName
+	}
+
+	return r.Name + "." + zoneName
 }
 
 func FromLibdns(lr libdns.Record) Record {

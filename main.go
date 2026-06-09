@@ -32,12 +32,14 @@ func main() {
 	err = storage.FetchZones()
 	log.MustFail(err)
 
-	log.Println("Fetching zone records...")
+	/*
+		log.Println("Fetching zone records...")
 
-	err = storage.FetchAllRecords(false)
-	log.MustFail(err)
+		err = storage.FetchAllRecords(false)
+		log.MustFail(err)
+	*/
 
-	storage.Store()
+	log.MustFail(storage.Store())
 
 	log.Println("Preparing router...")
 
