@@ -3,7 +3,9 @@ module plat
 go 1.26.4
 
 require (
+	github.com/coalaura/etch v0.1.0
 	github.com/coalaura/plain v1.4.3
+	github.com/coalaura/tape v0.1.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/goccy/go-yaml v1.19.2
 	github.com/libdns/cloudflare v0.2.2

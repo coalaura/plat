@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,10 +8,11 @@ import (
 	"os"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/coalaura/etch"
+	"github.com/coalaura/tape"
 	"github.com/goccy/go-yaml"
 	"github.com/libdns/cloudflare"
 )
@@ -265,7 +265,7 @@ func (s *Storage) Store() error {
 
 	names := slices.Sorted(maps.Keys(s.zoneMap))
 
-	var buf bytes.Buffer
+	var buf tape.Buffer
 
 	for _, name := range names {
 		zone := s.zoneMap[name]
@@ -283,7 +283,7 @@ func (s *Storage) Store() error {
 		buf.Grow(len(name) + 4)
 
 		buf.WriteString("$.'")
-		buf.WriteString(EscapeYamlPath(name))
+		etch.Replace(&buf, name, "'", `\'`, -1)
 		buf.WriteByte('\'')
 
 		zonePath := buf.String()
@@ -299,7 +299,7 @@ func (s *Storage) Store() error {
 
 			buf.WriteString(zonePath)
 			buf.WriteString(".records[")
-			buf.WriteString(strconv.FormatInt(int64(i), 10))
+			buf.WriteInt(int64(i), 10)
 			buf.WriteByte(']')
 
 			comments[buf.String()] = []*yaml.Comment{
