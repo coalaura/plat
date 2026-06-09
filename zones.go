@@ -35,7 +35,7 @@ func (z *Zone) RecordsList() []Record {
 	return records
 }
 
-func (z *Zone) UnmarshalYAML(unmarshal func(interface{}) error) error {
+func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 	var data zoneData
 
 	err := unmarshal(&data)
@@ -53,7 +53,7 @@ func (z *Zone) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
-func (z *Zone) MarshalYAML() (interface{}, error) {
+func (z *Zone) MarshalYAML() (any, error) {
 	return zoneData{
 		Name:    z.Name,
 		Records: z.RecordsList(),

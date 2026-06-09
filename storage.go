@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -164,25 +167,64 @@ func (s *Storage) Store() error {
 
 	s.mx.RLock()
 
-	snap := make(map[string]*Zone, len(s.zoneMap))
+	snap := make(map[string]zoneData, len(s.zoneMap))
+	comments := make(yaml.CommentMap, len(s.zoneMap))
 
-	for name, zone := range s.zoneMap {
+	names := slices.Sorted(maps.Keys(s.zoneMap))
+
+	var buf bytes.Buffer
+
+	for _, name := range names {
+		zone := s.zoneMap[name]
+
 		zone.mx.RLock()
+		list := zone.RecordsList()
+		zone.mx.RUnlock()
 
-		recordsCopy := make(map[string]Record, len(zone.Records))
-		maps.Copy(recordsCopy, zone.Records)
-
-		snap[name] = &Zone{
+		snap[name] = zoneData{
 			Name:    zone.Name,
-			Records: recordsCopy,
+			Records: list,
 		}
 
-		zone.mx.RUnlock()
+		buf.Reset()
+		buf.Grow(len(name) + 4)
+
+		buf.WriteString("$.'")
+		buf.WriteString(EscapeYamlPath(name))
+		buf.WriteByte('\'')
+
+		zonePath := buf.String()
+
+		comments[zonePath] = []*yaml.Comment{
+			yaml.HeadComment(" " + zone.Name),
+			yaml.FootComment(),
+		}
+
+		for i, rec := range list {
+			buf.Reset()
+			buf.Grow(len(zonePath) + 24)
+
+			buf.WriteString(zonePath)
+			buf.WriteString(".records[")
+			buf.WriteString(strconv.FormatInt(int64(i), 10))
+			buf.WriteByte(']')
+
+			comments[buf.String()] = []*yaml.Comment{
+				yaml.HeadComment(" " + rec.FullName(zone.Name)),
+			}
+		}
 	}
 
 	s.mx.RUnlock()
 
-	err = yaml.NewEncoder(file).Encode(snap)
+	enc := yaml.NewEncoder(file, yaml.WithComment(comments))
+
+	err = enc.Encode(snap)
+	if err != nil {
+		return err
+	}
+
+	err = enc.Close()
 	if err != nil {
 		return err
 	}
