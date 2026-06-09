@@ -157,7 +157,7 @@ func (s *Storage) Store() error {
 	return os.Rename("records.tmp", "records.yml")
 }
 
-func (s *Storage) FetchZones(config *Config) error {
+func (s *Storage) FetchZones() error {
 	zones, err := s.provider.ListZones(context.Background())
 	if err != nil {
 		return err
@@ -181,7 +181,22 @@ func (s *Storage) FetchZones(config *Config) error {
 	return nil
 }
 
-func (s *Storage) Fetch(config *Config, domain string, override bool) error {
+func (s *Storage) FetchAllRecords(override bool) error {
+	s.mx.RLock()
+	zones := s.zones
+	s.mx.RUnlock()
+
+	for _, zone := range zones {
+		err := s.FetchRecords(zone, override)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (s *Storage) FetchRecords(domain string, override bool) error {
 	records, err := s.provider.GetRecords(context.Background(), domain)
 	if err != nil {
 		return err

@@ -29,7 +29,7 @@ func main() {
 
 	log.Println("Fetching zones...")
 
-	err = storage.FetchZones(config)
+	err = storage.FetchZones()
 	log.MustFail(err)
 
 	log.Println("Preparing router...")
