@@ -89,8 +89,9 @@ func (e *Config) Store() error {
 	def := NewDefaultConfig()
 
 	comments := yaml.CommentMap{
-		"$.debug": {yaml.HeadComment(" enable verbose logging and diagnostics")},
+		"$.debug": {yaml.HeadComment(" enable verbose logging and diagnostics"), yaml.FootComment()},
 
+		"$.server":       {yaml.FootComment()},
 		"$.server.port":  {yaml.HeadComment(fmt.Sprintf(" port to run plat on (default: %v)", def.Server.Port))},
 		"$.server.token": {yaml.HeadComment(fmt.Sprintf(" token for authentication, (default: %q)", def.Server.Token))},
 

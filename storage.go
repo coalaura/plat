@@ -80,7 +80,7 @@ func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
 	return zone.RecordsList(), nil
 }
 
-func (s *Storage) GetRecord(zoneName string, recordName string) (Record, error) {
+func (s *Storage) GetRecord(zoneName string, id string) (Record, error) {
 	s.mx.RLock()
 
 	zone, exists := s.zoneMap[zoneName]
@@ -95,7 +95,7 @@ func (s *Storage) GetRecord(zoneName string, recordName string) (Record, error) 
 
 	s.mx.RUnlock()
 
-	rec, exists := zone.Records[recordName]
+	rec, exists := zone.Records[id]
 	if !exists {
 		return Record{}, errors.New("record not found")
 	}
@@ -119,17 +119,17 @@ func (s *Storage) SetRecord(zoneName string, record Record, override bool) error
 	s.mx.RUnlock()
 
 	if !override {
-		if _, exists := zone.Records[record.Name]; exists {
+		if _, exists := zone.Records[record.ID]; exists {
 			return errors.New("record already exists")
 		}
 	}
 
-	zone.Records[record.Name] = record
+	zone.Records[record.ID] = record
 
 	return nil
 }
 
-func (s *Storage) UnsetRecord(zoneName string, name string) error {
+func (s *Storage) UnsetRecord(zoneName string, id string) error {
 	s.mx.RLock()
 
 	zone, exists := s.zoneMap[zoneName]
@@ -144,11 +144,11 @@ func (s *Storage) UnsetRecord(zoneName string, name string) error {
 
 	s.mx.RUnlock()
 
-	if _, exists := zone.Records[name]; !exists {
+	if _, exists := zone.Records[id]; !exists {
 		return errors.New("record not found")
 	}
 
-	delete(zone.Records, name)
+	delete(zone.Records, id)
 
 	return nil
 }
@@ -235,12 +235,12 @@ func (s *Storage) FetchRecords(zoneName string, override bool) error {
 		record := FromLibdns(lr)
 
 		if !override {
-			if _, exists := zone.Records[record.Name]; exists {
+			if _, exists := zone.Records[record.ID]; exists {
 				continue
 			}
 		}
 
-		zone.Records[record.Name] = record
+		zone.Records[record.ID] = record
 	}
 
 	return nil
