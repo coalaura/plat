@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/goccy/go-yaml"
@@ -17,8 +20,8 @@ type Storage struct {
 
 	provider cloudflare.Provider
 
-	zones   []string
-	domains map[string][]Record `yaml:"domains"`
+	zoneNames []string
+	zoneMap   map[string]*Zone
 }
 
 func LoadStorage(config *Config) (*Storage, error) {
@@ -27,7 +30,7 @@ func LoadStorage(config *Config) (*Storage, error) {
 			APIToken: config.Cloudflare.Token,
 		},
 
-		domains: make(map[string][]Record),
+		zoneMap: make(map[string]*Zone),
 	}
 
 	file, err := OpenFileForReading("records.yml")
@@ -41,7 +44,7 @@ func LoadStorage(config *Config) (*Storage, error) {
 
 	defer file.Close()
 
-	err = yaml.NewDecoder(file).Decode(&storage.domains)
+	err = yaml.NewDecoder(file).Decode(&storage.zoneMap)
 	if err != nil {
 		return nil, err
 	}
@@ -49,87 +52,102 @@ func LoadStorage(config *Config) (*Storage, error) {
 	return &storage, nil
 }
 
-func (s *Storage) GetZones() []string {
+func (s *Storage) GetZoneNames() []string {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
-	return s.zones
+	return s.zoneNames
 }
 
-func (s *Storage) GetRecords(domain string) ([]Record, error) {
+func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
 	s.mx.RLock()
-	defer s.mx.RUnlock()
 
-	list, exists := s.domains[domain]
+	zone, exists := s.zoneMap[zoneName]
 	if !exists {
-		return nil, fmt.Errorf("unknown domain %q", domain)
+		s.mx.RUnlock()
+
+		return nil, fmt.Errorf("unknown zone %q", zoneName)
 	}
 
-	return list, nil
+	zone.mx.RLock()
+	defer zone.mx.RUnlock()
+
+	s.mx.RUnlock()
+
+	return zone.RecordsList(), nil
 }
 
-func (s *Storage) GetRecord(domain string, recordName string) (Record, error) {
+func (s *Storage) GetRecord(zoneName string, recordName string) (Record, error) {
 	s.mx.RLock()
-	defer s.mx.RUnlock()
 
-	list, exists := s.domains[domain]
+	zone, exists := s.zoneMap[zoneName]
 	if !exists {
-		return Record{}, fmt.Errorf("unknown domain %q", domain)
+		s.mx.RUnlock()
+
+		return Record{}, fmt.Errorf("unknown zone %q", zoneName)
 	}
 
-	for _, entry := range list {
-		if entry.Name == recordName {
-			return entry, nil
+	zone.mx.RLock()
+	defer zone.mx.RUnlock()
+
+	s.mx.RUnlock()
+
+	rec, exists := zone.Records[recordName]
+	if !exists {
+		return Record{}, errors.New("record not found")
+	}
+
+	return rec, nil
+}
+
+func (s *Storage) SetRecord(zoneName string, record Record, override bool) error {
+	s.mx.RLock()
+
+	zone, exists := s.zoneMap[zoneName]
+	if !exists {
+		s.mx.RUnlock()
+
+		return fmt.Errorf("unknown zone %q", zoneName)
+	}
+
+	zone.mx.Lock()
+	defer zone.mx.Unlock()
+
+	s.mx.RUnlock()
+
+	if !override {
+		if _, exists := zone.Records[record.Name]; exists {
+			return errors.New("record already exists")
 		}
 	}
 
-	return Record{}, errors.New("record not found")
-}
-
-func (s *Storage) SetRecord(domain string, record Record, override bool) error {
-	s.mx.Lock()
-	defer s.mx.Unlock()
-
-	list, exists := s.domains[domain]
-	if !exists {
-		return fmt.Errorf("unknown domain %q", domain)
-	}
-
-	for i, entry := range list {
-		if entry.Name == record.Name {
-			if !override {
-				return errors.New("record already exists")
-			}
-
-			list[i] = record
-
-			return nil
-		}
-	}
-
-	s.domains[domain] = append(list, record)
+	zone.Records[record.Name] = record
 
 	return nil
 }
 
-func (s *Storage) UnsetRecord(domain string, name string) error {
-	s.mx.Lock()
-	defer s.mx.Unlock()
+func (s *Storage) UnsetRecord(zoneName string, name string) error {
+	s.mx.RLock()
 
-	list, exists := s.domains[domain]
+	zone, exists := s.zoneMap[zoneName]
 	if !exists {
-		return fmt.Errorf("unknown domain %q", domain)
+		s.mx.RUnlock()
+
+		return fmt.Errorf("unknown zone %q", zoneName)
 	}
 
-	for i, entry := range list {
-		if entry.Name == name {
-			s.domains[domain] = append(list[:i], list[i+1:]...)
+	zone.mx.Lock()
+	defer zone.mx.Unlock()
 
-			return nil
-		}
+	s.mx.RUnlock()
+
+	if _, exists := zone.Records[name]; !exists {
+		return errors.New("record not found")
 	}
 
-	return errors.New("record not found")
+	delete(zone.Records, name)
+
+	return nil
 }
 
 func (s *Storage) Store() error {
@@ -145,9 +163,26 @@ func (s *Storage) Store() error {
 	defer os.Remove("records.tmp")
 
 	s.mx.RLock()
-	err = yaml.NewEncoder(file).Encode(s.domains)
+
+	snap := make(map[string]*Zone, len(s.zoneMap))
+
+	for name, zone := range s.zoneMap {
+		zone.mx.RLock()
+
+		recordsCopy := make(map[string]Record, len(zone.Records))
+		maps.Copy(recordsCopy, zone.Records)
+
+		snap[name] = &Zone{
+			Name:    zone.Name,
+			Records: recordsCopy,
+		}
+
+		zone.mx.RUnlock()
+	}
+
 	s.mx.RUnlock()
 
+	err = yaml.NewEncoder(file).Encode(snap)
 	if err != nil {
 		return err
 	}
@@ -166,15 +201,32 @@ func (s *Storage) FetchZones() error {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	s.zones = make([]string, 0, len(zones))
+	s.zoneNames = make([]string, 0, len(zones))
+
+	for name, zone := range s.zoneMap {
+		zone.mx.RLock()
+		empty := len(zone.Records) == 0
+		zone.mx.RUnlock()
+
+		if empty {
+			delete(s.zoneMap, name)
+		}
+	}
 
 	for _, zone := range zones {
-		domain := zone.Name
+		s.zoneNames = append(s.zoneNames, zone.Name)
+	}
 
-		s.zones = append(s.zones, domain)
+	sort.Strings(s.zoneNames)
 
-		if _, ok := s.domains[domain]; !ok {
-			s.domains[domain] = make([]Record, 0)
+	for _, name := range s.zoneNames {
+		if _, ok := s.zoneMap[name]; ok {
+			continue
+		}
+
+		s.zoneMap[name] = &Zone{
+			Name:    strings.TrimSuffix(name, "."),
+			Records: make(map[string]Record),
 		}
 	}
 
@@ -183,11 +235,13 @@ func (s *Storage) FetchZones() error {
 
 func (s *Storage) FetchAllRecords(override bool) error {
 	s.mx.RLock()
-	zones := s.zones
+	names := s.zoneNames
 	s.mx.RUnlock()
 
-	for _, zone := range zones {
-		err := s.FetchRecords(zone, override)
+	for i, name := range names {
+		log.Printf("Fetching %d/%d...\r", i+1, len(names))
+
+		err := s.FetchRecords(name, override)
 		if err != nil {
 			return err
 		}
@@ -196,14 +250,36 @@ func (s *Storage) FetchAllRecords(override bool) error {
 	return nil
 }
 
-func (s *Storage) FetchRecords(domain string, override bool) error {
-	records, err := s.provider.GetRecords(context.Background(), domain)
+func (s *Storage) FetchRecords(zoneName string, override bool) error {
+	records, err := s.provider.GetRecords(context.Background(), zoneName)
 	if err != nil {
 		return err
 	}
 
-	for _, record := range records {
-		s.SetRecord(domain, FromLibdns(record), override)
+	s.mx.RLock()
+
+	zone, exists := s.zoneMap[zoneName]
+	if !exists {
+		s.mx.RUnlock()
+
+		return fmt.Errorf("unknown zone %q", zoneName)
+	}
+
+	zone.mx.Lock()
+	defer zone.mx.Unlock()
+
+	s.mx.RUnlock()
+
+	for _, lr := range records {
+		record := FromLibdns(lr)
+
+		if !override {
+			if _, exists := zone.Records[record.Name]; exists {
+				continue
+			}
+		}
+
+		zone.Records[record.Name] = record
 	}
 
 	return nil

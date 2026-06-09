@@ -32,6 +32,13 @@ func main() {
 	err = storage.FetchZones()
 	log.MustFail(err)
 
+	log.Println("Fetching zone records...")
+
+	err = storage.FetchAllRecords(false)
+	log.MustFail(err)
+
+	storage.Store()
+
 	log.Println("Preparing router...")
 
 	r := chi.NewRouter()
@@ -48,7 +55,7 @@ func main() {
 		)
 
 		if authenticated {
-			zones = storage.GetZones()
+			zones = storage.GetZoneNames()
 		}
 
 		okay(w, map[string]any{
@@ -60,12 +67,12 @@ func main() {
 	r.Group(func(gr chi.Router) {
 		gr.Use(authenticate(config))
 
-		gr.Get("/-/z/{zone}", HandleListRecords(storage))
+		gr.Get("/-/{zone}", HandleListRecords(storage))
 
-		gr.Put("/-/z/{zone}", HandleSetRecord(storage, true))
-		gr.Post("/-/z/{zone}", HandleSetRecord(storage, false))
+		gr.Put("/-/{zone}", HandleSetRecord(storage, true))
+		gr.Post("/-/{zone}", HandleSetRecord(storage, false))
 
-		gr.Delete("/-/z/{zone}", HandleUnsetRecord(storage))
+		gr.Delete("/-/{zone}/{record}", HandleUnsetRecord(storage))
 	})
 
 	addr := config.Addr()

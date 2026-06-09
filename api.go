@@ -4,21 +4,20 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 
 	"github.com/go-chi/chi/v5"
 )
 
 func HandleListRecords(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		domain, err := resolveDomain(r)
+		zone, err := resolveZone(r)
 		if err != nil {
 			abort(w, http.StatusBadRequest, err.Error())
 
 			return
 		}
 
-		list, err := storage.GetRecords(domain)
+		list, err := storage.GetRecords(zone)
 		if err != nil {
 			abort(w, http.StatusNotFound, err.Error())
 
@@ -31,7 +30,7 @@ func HandleListRecords(storage *Storage) http.HandlerFunc {
 
 func HandleSetRecord(storage *Storage, override bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		domain, err := resolveDomain(r)
+		zone, err := resolveZone(r)
 		if err != nil {
 			abort(w, http.StatusBadRequest, err.Error())
 
@@ -47,7 +46,7 @@ func HandleSetRecord(storage *Storage, override bool) http.HandlerFunc {
 			return
 		}
 
-		err = storage.SetRecord(domain, record, override)
+		err = storage.SetRecord(zone, record, override)
 		if err != nil {
 			abort(w, http.StatusInternalServerError, err.Error())
 
@@ -67,7 +66,7 @@ func HandleSetRecord(storage *Storage, override bool) http.HandlerFunc {
 
 func HandleUnsetRecord(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		domain, err := resolveDomain(r)
+		zone, err := resolveZone(r)
 		if err != nil {
 			abort(w, http.StatusBadRequest, err.Error())
 
@@ -81,7 +80,7 @@ func HandleUnsetRecord(storage *Storage) http.HandlerFunc {
 			return
 		}
 
-		err = storage.UnsetRecord(domain, name)
+		err = storage.UnsetRecord(zone, name)
 		if err != nil {
 			abort(w, http.StatusInternalServerError, err.Error())
 
@@ -99,16 +98,21 @@ func HandleUnsetRecord(storage *Storage) http.HandlerFunc {
 	}
 }
 
-func resolveDomain(r *http.Request) (string, error) {
-	raw := chi.URLParam(r, "domain")
-	if raw == "" {
-		return "", errors.New("missing domain")
+func resolveZone(r *http.Request) (string, error) {
+	zone := chi.URLParam(r, "zone")
+	if zone == "" {
+		return "", errors.New("missing zone")
 	}
 
-	uri, err := url.Parse(raw)
-	if err != nil {
-		return "", errors.New("invalid domain")
+	if len(zone) < 2 || zone[len(zone)-1] != '.' {
+		return "", errors.New("invalid zone")
 	}
 
-	return uri.Hostname(), nil
+	for _, r := range zone {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' {
+			return "", errors.New("invalid zone")
+		}
+	}
+
+	return zone, nil
 }
