@@ -32,15 +32,6 @@ func main() {
 	err = storage.FetchZones()
 	log.MustFail(err)
 
-	/*
-		log.Println("Fetching zone records...")
-
-		err = storage.FetchAllRecords(false)
-		log.MustFail(err)
-	*/
-
-	log.MustFail(storage.Store())
-
 	log.Println("Preparing router...")
 
 	r := chi.NewRouter()
@@ -70,6 +61,7 @@ func main() {
 		gr.Use(authenticate(config))
 
 		gr.Get("/-/{zone}", HandleListRecords(storage))
+		gr.Patch("/-/{zone}", HandleFetchRecords(storage))
 
 		gr.Put("/-/{zone}", HandleSetRecord(storage, true))
 		gr.Post("/-/{zone}", HandleSetRecord(storage, false))

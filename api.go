@@ -8,6 +8,17 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+func DoListRecords(storage *Storage, w http.ResponseWriter, zone string) {
+	list, err := storage.GetRecords(zone)
+	if err != nil {
+		abort(w, http.StatusNotFound, err.Error())
+
+		return
+	}
+
+	okay(w, list)
+}
+
 func HandleListRecords(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		zone, err := resolveZone(r)
@@ -17,14 +28,27 @@ func HandleListRecords(storage *Storage) http.HandlerFunc {
 			return
 		}
 
-		list, err := storage.GetRecords(zone)
+		DoListRecords(storage, w, zone)
+	}
+}
+
+func HandleFetchRecords(storage *Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		zone, err := resolveZone(r)
+		if err != nil {
+			abort(w, http.StatusBadRequest, err.Error())
+
+			return
+		}
+
+		err = storage.FetchRecords(zone, false)
 		if err != nil {
 			abort(w, http.StatusNotFound, err.Error())
 
 			return
 		}
 
-		okay(w, list)
+		DoListRecords(storage, w, zone)
 	}
 }
 
