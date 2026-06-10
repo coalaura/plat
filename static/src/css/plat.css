@@ -62,15 +62,25 @@ textarea {
 	color: inherit;
 }
 
+#app,
+.shell,
+.content-slot,
+.layout,
+.zones-slot,
+.zones,
+.records-slot,
+.records {
+	height: 100%;
+	overflow: hidden;
+}
+
 #app {
 	padding: 18px;
-	height: 100%;
 }
 
 .shell {
 	max-width: 1720px;
 	width: min(96vw, 1720px);
-	height: 100%;
 	margin: 0 auto;
 	display: grid;
 	gap: 14px;

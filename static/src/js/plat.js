@@ -38,6 +38,15 @@ const state = {
 	error: "",
 };
 
+const ui = {
+	mounted: false,
+	headerSlot: null,
+	statusSlot: null,
+	contentSlot: null,
+	zonesSlot: null,
+	recordsSlot: null,
+};
+
 function make(tag, ...classes) {
 	classes = classes.filter(Boolean);
 
@@ -443,7 +452,7 @@ function setStatus(message, isError) {
 	state.message = isError ? "" : message;
 	state.error = isError ? message : "";
 
-	render();
+	renderStatus();
 }
 
 function applyTheme() {
@@ -529,30 +538,39 @@ async function loadZone(zone) {
 	if (!zone) {
 		state.records = [];
 
+		renderAuthedPanels();
+
 		return;
 	}
 
+	state.activeZone = zone;
+
+	setZoneHash(zone);
+
+	state.records = [];
+
 	state.loading = true;
 
-	render();
+	renderAuthedPanels();
 
 	try {
 		const records = await api(`/-/${encodeURIComponent(zone)}`);
 
 		state.records = Array.isArray(records) ? records : [];
-		state.activeZone = zone;
-
-		setZoneHash(zone);
 
 		state.message = "";
 		state.error = "";
+
+		renderStatus();
 	} catch (err) {
 		state.records = [];
 		state.error = err.message;
+
+		renderStatus();
 	} finally {
 		state.loading = false;
 
-		render();
+		renderAuthedPanels();
 	}
 }
 
@@ -563,7 +581,7 @@ async function refreshZoneFromCloudflare() {
 
 	state.loading = true;
 
-	render();
+	renderRecords();
 
 	try {
 		const records = await api(`/-/${encodeURIComponent(state.activeZone)}`, {
@@ -578,7 +596,7 @@ async function refreshZoneFromCloudflare() {
 	} finally {
 		state.loading = false;
 
-		render();
+		renderRecords();
 	}
 }
 
@@ -1197,25 +1215,107 @@ function createRecords() {
 	return panel;
 }
 
-function createAuthed() {
-	const layout = make("div", "layout");
-
-	layout.append(createZones(), createRecords());
-
-	return layout;
-}
-
-function render() {
-	app.replaceChildren();
-
-	applyTheme();
+function mountShell() {
+	if (ui.mounted) {
+		return;
+	}
 
 	const shell = make("main", "shell");
 
-	shell.append(createHeader(), createStatus());
-	shell.append(state.authenticated ? createAuthed() : createLogin());
+	ui.headerSlot = make("div", "header-slot");
+	ui.statusSlot = make("div", "status-slot");
+	ui.contentSlot = make("div", "content-slot");
+
+	shell.append(ui.headerSlot, ui.statusSlot, ui.contentSlot);
 
 	app.append(shell);
+
+	ui.mounted = true;
+}
+
+function clearAuthedSlots() {
+	ui.zonesSlot = null;
+	ui.recordsSlot = null;
+}
+
+function ensureAuthedLayout() {
+	if (ui.zonesSlot && ui.recordsSlot) {
+		return;
+	}
+
+	const layout = make("div", "layout");
+
+	ui.zonesSlot = make("div", "zones-slot");
+	ui.recordsSlot = make("div", "records-slot");
+
+	layout.append(ui.zonesSlot, ui.recordsSlot);
+
+	ui.contentSlot.replaceChildren(layout);
+}
+
+function renderHeader() {
+	if (!ui.mounted) {
+		return;
+	}
+
+	ui.headerSlot.replaceChildren(createHeader());
+}
+
+function renderStatus() {
+	if (!ui.mounted) {
+		return;
+	}
+
+	ui.statusSlot.replaceChildren(createStatus());
+}
+
+function renderZones() {
+	if (!ui.mounted || !state.authenticated) {
+		return;
+	}
+
+	ensureAuthedLayout();
+
+	ui.zonesSlot.replaceChildren(createZones());
+}
+
+function renderRecords() {
+	if (!ui.mounted || !state.authenticated) {
+		return;
+	}
+
+	ensureAuthedLayout();
+
+	ui.recordsSlot.replaceChildren(createRecords());
+}
+
+function renderAuthedPanels() {
+	renderZones();
+	renderRecords();
+}
+
+function renderContent() {
+	if (!ui.mounted) {
+		return;
+	}
+
+	if (!state.authenticated) {
+		clearAuthedSlots();
+		ui.contentSlot.replaceChildren(createLogin());
+
+		return;
+	}
+
+	ensureAuthedLayout();
+	renderAuthedPanels();
+}
+
+function render() {
+	applyTheme();
+	mountShell();
+	renderHeader();
+	renderStatus();
+	renderContent();
 }
 
 async function onLoginSubmit(event) {
@@ -1242,6 +1342,8 @@ async function onLoginSubmit(event) {
 
 			return;
 		}
+
+		render();
 
 		setStatus("Authenticated.", false);
 	} catch (err) {
