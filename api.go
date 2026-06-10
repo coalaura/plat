@@ -52,7 +52,7 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 	}
 }
 
-func HandleSetRecord(storage *Storage, override bool) http.HandlerFunc {
+func HandleSetRecord(storage *Storage, isCreate bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		zone, err := resolveZone(r)
 		if err != nil {
@@ -70,7 +70,15 @@ func HandleSetRecord(storage *Storage, override bool) http.HandlerFunc {
 			return
 		}
 
-		err = storage.SetRecord(zone, &record, override)
+		if isCreate {
+			record.ID = ""
+		} else if record.ID == "" {
+			abort(w, http.StatusBadRequest, "missing record id")
+
+			return
+		}
+
+		err = storage.SetRecord(zone, &record)
 		if err != nil {
 			abort(w, http.StatusInternalServerError, err.Error())
 

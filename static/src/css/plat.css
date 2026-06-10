@@ -533,6 +533,28 @@ button:disabled {
 	color: var(--ink-muted);
 }
 
+.confirm-message {
+	margin: 0;
+	font-size: 0.92rem;
+	color: var(--ink-muted);
+}
+
+.confirm-modal {
+	width: min(520px, 100%);
+	padding: 18px;
+	display: grid;
+	gap: 14px;
+}
+
+.confirm-modal .modal-top {
+	justify-content: flex-start;
+}
+
+.confirm-actions {
+	justify-content: flex-end;
+	gap: 8px;
+}
+
 .hidden {
 	display: none !important;
 }

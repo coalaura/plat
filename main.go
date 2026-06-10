@@ -63,8 +63,8 @@ func main() {
 		gr.Get("/-/{zone}", HandleListRecords(storage))
 		gr.Patch("/-/{zone}", HandleFetchRecords(storage))
 
-		gr.Put("/-/{zone}", HandleSetRecord(storage, true))
-		gr.Post("/-/{zone}", HandleSetRecord(storage, false))
+		gr.Put("/-/{zone}", HandleSetRecord(storage, false))
+		gr.Post("/-/{zone}", HandleSetRecord(storage, true))
 
 		gr.Delete("/-/{zone}/{record}", HandleUnsetRecord(storage))
 	})

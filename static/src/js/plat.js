@@ -36,6 +36,7 @@ const state = {
 	loadingRecords: false,
 	syncingRecords: false,
 	savingRecord: false,
+	deletingRecordId: "",
 	reloadingZones: false,
 };
 
@@ -228,7 +229,7 @@ function recordTypeConfig(type) {
 					rows: 4,
 				},
 			],
-			build: data => data.text,
+			build: data => quote(data.text),
 			parse: value => ({ text: splitTokens(value).join(" ") }),
 		},
 		MX: {
@@ -731,13 +732,84 @@ async function saveRecord(record, isUpdate) {
 }
 
 async function deleteRecord(record) {
-	await api(`/-/${encodeURIComponent(state.activeZone)}/${encodeURIComponent(record.id)}`, {
-		method: "DELETE",
+	if (state.deletingRecordId) {
+		throw new Error("A record delete is already in progress.");
+	}
+
+	state.deletingRecordId = record.id;
+
+	renderRecords();
+
+	try {
+		await api(`/-/${encodeURIComponent(state.activeZone)}/${encodeURIComponent(record.id)}`, {
+			method: "DELETE",
+		});
+
+		setStatus(`Deleted ${record.name} (${record.type}).`, false);
+
+		await loadZone(state.activeZone);
+	} finally {
+		state.deletingRecordId = "";
+
+		renderRecords();
+	}
+}
+
+function confirmAction({ title, message, confirmText = "Confirm", cancelText = "Cancel", danger = false }) {
+	return new Promise(resolve => {
+		const overlay = make("div", "overlay"),
+			modal = make("div", "modal", "confirm-modal"),
+			top = make("div", "modal-top"),
+			heading = make("h2", "modal-title"),
+			text = make("p", "confirm-message"),
+			footer = make("div", "modal-foot", "confirm-actions"),
+			confirmButton = make("button", "ghost", danger ? "danger" : ""),
+			cancelButton = make("button", "ghost");
+
+		heading.textContent = title;
+		text.textContent = message;
+
+		confirmButton.type = "button";
+		confirmButton.textContent = confirmText;
+
+		cancelButton.type = "button";
+		cancelButton.textContent = cancelText;
+
+		const done = accepted => {
+			document.removeEventListener("keydown", onKeydown);
+
+			overlay.remove();
+
+			resolve(accepted);
+		};
+
+		const onKeydown = event => {
+			if (event.key === "Escape") {
+				done(false);
+			}
+		};
+
+		cancelButton.addEventListener("click", () => done(false));
+		confirmButton.addEventListener("click", () => done(true));
+
+		overlay.addEventListener("click", event => {
+			if (event.target === overlay) {
+				done(false);
+			}
+		});
+
+		document.addEventListener("keydown", onKeydown);
+
+		top.append(heading);
+
+		footer.append(cancelButton, confirmButton);
+
+		modal.append(top, text, footer);
+
+		overlay.append(modal);
+
+		document.body.append(overlay);
 	});
-
-	setStatus(`Deleted ${record.name} (${record.type}).`, false);
-
-	await loadZone(state.activeZone);
 }
 
 function parseFormRecord(formData, currentRecord) {
@@ -1149,7 +1221,7 @@ function createZones() {
 		const button = make("button", "zone-item", zoneId === state.activeZone ? "active" : "");
 
 		button.type = "button";
-		button.disabled = state.loadingRecords || state.syncingRecords || state.savingRecord;
+		button.disabled = state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId);
 		button.dataset.zoneId = zoneId;
 		button.textContent = zoneDisplay(zoneName);
 		button.title = `${zoneDisplay(zoneName)} (${zoneId})`;
@@ -1304,7 +1376,7 @@ function createRecords() {
 		head = make("thead"),
 		body = make("tbody");
 
-	const recordsBusy = state.loadingRecords || state.syncingRecords || state.savingRecord;
+	const recordsBusy = state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId);
 
 	title.textContent = state.activeZone ? `${zoneDisplay(activeZoneName())} records` : "Records";
 
@@ -1386,7 +1458,7 @@ function createRecords() {
 		edit.disabled = recordsBusy;
 
 		del.type = "button";
-		del.textContent = "Delete";
+		del.textContent = state.deletingRecordId === record.id ? "Deleting..." : "Delete";
 		del.disabled = recordsBusy;
 
 		edit.addEventListener("click", () => onEditRecordClick(record));
@@ -1561,6 +1633,7 @@ function onLogoutClick() {
 	state.loadingRecords = false;
 	state.syncingRecords = false;
 	state.savingRecord = false;
+	state.deletingRecordId = "";
 	state.reloadingZones = false;
 
 	sessionStorage.removeItem("plat-token");
@@ -1623,7 +1696,17 @@ function onEditRecordClick(record) {
 }
 
 async function onDeleteRecordClick(record) {
-	const okayDelete = window.confirm(`Delete ${record.name} (${record.type})?`);
+	if (state.deletingRecordId) {
+		return;
+	}
+
+	const okayDelete = await confirmAction({
+		title: "Delete record",
+		message: `Delete ${record.name} (${record.type})? This cannot be undone.`,
+		confirmText: "Delete",
+		danger: true,
+	});
+
 	if (!okayDelete) {
 		return;
 	}

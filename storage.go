@@ -62,14 +62,14 @@ func (s *Storage) GetZones() map[string]string {
 	return zones
 }
 
-func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
+func (s *Storage) GetRecords(zoneId string) ([]Record, error) {
 	s.mx.RLock()
 
-	zone, exists := s.zones[zoneName]
+	zone, exists := s.zones[zoneId]
 	if !exists {
 		s.mx.RUnlock()
 
-		return nil, fmt.Errorf("unknown zone %q", zoneName)
+		return nil, fmt.Errorf("unknown zone %q", zoneId)
 	}
 
 	zone.mx.RLock()
@@ -80,14 +80,14 @@ func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
 	return zone.RecordsList(), nil
 }
 
-func (s *Storage) GetRecord(zoneName string, id string) (*Record, error) {
+func (s *Storage) GetRecord(zoneId string, id string) (*Record, error) {
 	s.mx.RLock()
 
-	zone, exists := s.zones[zoneName]
+	zone, exists := s.zones[zoneId]
 	if !exists {
 		s.mx.RUnlock()
 
-		return nil, fmt.Errorf("unknown zone %q", zoneName)
+		return nil, fmt.Errorf("unknown zone %q", zoneId)
 	}
 
 	zone.mx.RLock()
@@ -103,14 +103,14 @@ func (s *Storage) GetRecord(zoneName string, id string) (*Record, error) {
 	return rec, nil
 }
 
-func (s *Storage) SetRecord(zoneName string, record *Record, override bool) error {
+func (s *Storage) SetRecord(zoneId string, record *Record) error {
 	s.mx.RLock()
 
-	zone, exists := s.zones[zoneName]
+	zone, exists := s.zones[zoneId]
 	if !exists {
 		s.mx.RUnlock()
 
-		return fmt.Errorf("unknown zone %q", zoneName)
+		return fmt.Errorf("unknown zone %q", zoneId)
 	}
 
 	zone.mx.Lock()
@@ -118,10 +118,16 @@ func (s *Storage) SetRecord(zoneName string, record *Record, override bool) erro
 
 	s.mx.RUnlock()
 
-	if !override {
-		if _, exists := zone.Records[record.ID]; exists {
-			return errors.New("record already exists")
-		}
+	var err error
+
+	if record.ID == "" {
+		err = s.client.CreateRecord(context.Background(), zoneId, record)
+	} else {
+		err = s.client.UpdateRecord(context.Background(), zoneId, record)
+	}
+
+	if err != nil {
+		return err
 	}
 
 	zone.Records[record.ID] = record
@@ -129,14 +135,14 @@ func (s *Storage) SetRecord(zoneName string, record *Record, override bool) erro
 	return nil
 }
 
-func (s *Storage) UnsetRecord(zoneName string, id string) error {
+func (s *Storage) UnsetRecord(zoneId, recordId string) error {
 	s.mx.RLock()
 
-	zone, exists := s.zones[zoneName]
+	zone, exists := s.zones[zoneId]
 	if !exists {
 		s.mx.RUnlock()
 
-		return fmt.Errorf("unknown zone %q", zoneName)
+		return fmt.Errorf("unknown zone %q", zoneId)
 	}
 
 	zone.mx.Lock()
@@ -144,11 +150,16 @@ func (s *Storage) UnsetRecord(zoneName string, id string) error {
 
 	s.mx.RUnlock()
 
-	if _, exists := zone.Records[id]; !exists {
+	if _, exists := zone.Records[recordId]; !exists {
 		return errors.New("record not found")
 	}
 
-	delete(zone.Records, id)
+	err := s.client.DeleteRecord(context.Background(), zoneId, recordId)
+	if err != nil {
+		return err
+	}
+
+	delete(zone.Records, recordId)
 
 	return nil
 }
