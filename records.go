@@ -1,29 +1,23 @@
 package main
 
 import (
-	"time"
+	"fmt"
+	"strconv"
+	"strings"
+	"unicode"
 
-	"github.com/libdns/libdns"
+	"github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/dns"
 )
 
 // A, AAAA, CAA, CERT, CNAME, DNSKEY, DS, HTTPS, LOC, MX, NAPTR, NS, OPENPGPKEY, PTR, SMIMEA, SRV, SSHFP, SVCB, TLSA, TXT, URI
 
 type Record struct {
-	ID string `yaml:"-" json:"id"`
-
+	ID    string `yaml:"id" json:"id"`
 	Type  string `yaml:"type" json:"type"`
 	Name  string `yaml:"name" json:"name"`
 	Value string `yaml:"value" json:"value"`
 	TTL   int64  `yaml:"ttl,omitempty" json:"ttl,omitempty"`
-}
-
-func (r Record) ToLibdns() libdns.Record {
-	return libdns.RR{
-		Type: r.Type,
-		Name: r.Name,
-		Data: r.Value,
-		TTL:  time.Duration(r.TTL) * time.Second,
-	}
 }
 
 func (r Record) FullName(zoneName string) string {
@@ -45,15 +39,567 @@ func (r Record) UnmarshalYAML(unmarshal func(any) error) error {
 	return nil
 }
 
-func FromLibdns(lr libdns.Record) Record {
-	rr := lr.RR()
-
-	return Record{
-		ID: FreeId(),
-
-		Type:  rr.Type,
-		Name:  rr.Name,
-		Value: rr.Data,
-		TTL:   int64(rr.TTL.Seconds()),
+func (r Record) ToCloudflareNew() (dns.RecordNewParamsBodyUnion, error) {
+	param, err := r.ToCloudflare()
+	if err != nil {
+		return nil, err
 	}
+
+	return param.(dns.RecordNewParamsBodyUnion), nil
+}
+
+func (r Record) ToCloudflareEdit() (dns.RecordEditParamsBodyUnion, error) {
+	param, err := r.ToCloudflare()
+	if err != nil {
+		return nil, err
+	}
+
+	return param.(dns.RecordEditParamsBodyUnion), nil
+}
+
+func (r Record) ToCloudflare() (any, error) {
+	fields := parseFields(r.Value)
+
+	switch strings.ToUpper(r.Type) {
+	case "A":
+		return dns.ARecordParam{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.ARecordTypeA),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	case "AAAA":
+		return dns.AAAARecordParam{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.AAAARecordTypeAAAA),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	case "CNAME":
+		return dns.CNAMERecordParam{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.CNAMERecordTypeCNAME),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	case "MX":
+		if len(fields) < 2 {
+			return nil, fmt.Errorf("invalid MX record value: %q (expected <priority> <mail-server>)", r.Value)
+		}
+
+		prio, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid MX priority %q: %w", fields[0], err)
+		}
+
+		return dns.MXRecordParam{
+			Name:     cloudflare.F(r.Name),
+			TTL:      cloudflare.F(dns.TTL(r.TTL)),
+			Type:     cloudflare.F(dns.MXRecordTypeMX),
+			Priority: cloudflare.F(prio),
+			Content:  cloudflare.F(fields[1]),
+		}, nil
+	case "NS":
+		return dns.NSRecordParam{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.NSRecordTypeNS),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	case "PTR":
+		return dns.PTRRecordParam{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.PTRRecordTypePTR),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	case "TXT":
+		txtContent := r.Value
+		if len(txtContent) >= 2 && txtContent[0] == '"' && txtContent[len(txtContent)-1] == '"' {
+			txtContent = txtContent[1 : len(txtContent)-1]
+		}
+
+		return dns.TXTRecordParam{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.TXTRecordTypeTXT),
+			Content: cloudflare.F(txtContent),
+		}, nil
+	case "CAA":
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("invalid CAA record value: %q (expected <flags> <tag> <value>)", r.Value)
+		}
+
+		flags, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CAA flags %q: %w", fields[0], err)
+		}
+
+		return dns.CAARecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.CAARecordTypeCAA),
+			Data: cloudflare.F(dns.CAARecordDataParam{
+				Flags: cloudflare.F(flags),
+				Tag:   cloudflare.F(fields[1]),
+				Value: cloudflare.F(fields[2]),
+			}),
+		}, nil
+	case "CERT":
+		if len(fields) < 4 {
+			return nil, fmt.Errorf("invalid CERT record value: %q (expected <type> <key_tag> <algorithm> <certificate>)", r.Value)
+		}
+
+		certType, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CERT type %q: %w", fields[0], err)
+		}
+
+		keyTag, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CERT key_tag %q: %w", fields[1], err)
+		}
+
+		algo, err := strconv.ParseFloat(fields[2], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CERT algorithm %q: %w", fields[2], err)
+		}
+
+		return dns.CERTRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.CERTRecordTypeCERT),
+			Data: cloudflare.F(dns.CERTRecordDataParam{
+				Type:        cloudflare.F(certType),
+				KeyTag:      cloudflare.F(keyTag),
+				Algorithm:   cloudflare.F(algo),
+				Certificate: cloudflare.F(fields[3]),
+			}),
+		}, nil
+	case "DNSKEY":
+		if len(fields) < 4 {
+			return nil, fmt.Errorf("invalid DNSKEY record value: %q (expected <flags> <protocol> <algorithm> <public_key>)", r.Value)
+		}
+
+		flags, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DNSKEY flags %q: %w", fields[0], err)
+		}
+
+		proto, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DNSKEY protocol %q: %w", fields[1], err)
+		}
+
+		algo, err := strconv.ParseFloat(fields[2], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DNSKEY algorithm %q: %w", fields[2], err)
+		}
+
+		return dns.DNSKEYRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.DNSKEYRecordTypeDNSKEY),
+			Data: cloudflare.F(dns.DNSKEYRecordDataParam{
+				Flags:     cloudflare.F(flags),
+				Protocol:  cloudflare.F(proto),
+				Algorithm: cloudflare.F(algo),
+				PublicKey: cloudflare.F(fields[3]),
+			}),
+		}, nil
+	case "DS":
+		if len(fields) < 4 {
+			return nil, fmt.Errorf("invalid DS record value: %q (expected <key_tag> <algorithm> <digest_type> <digest>)", r.Value)
+		}
+
+		keyTag, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DS key_tag %q: %w", fields[0], err)
+		}
+
+		algo, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DS algorithm %q: %w", fields[1], err)
+		}
+
+		digestType, err := strconv.ParseFloat(fields[2], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid DS digest_type %q: %w", fields[2], err)
+		}
+
+		return dns.DSRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.DSRecordTypeDS),
+			Data: cloudflare.F(dns.DSRecordDataParam{
+				KeyTag:     cloudflare.F(keyTag),
+				Algorithm:  cloudflare.F(algo),
+				DigestType: cloudflare.F(digestType),
+				Digest:     cloudflare.F(fields[3]),
+			}),
+		}, nil
+	case "HTTPS":
+		if len(fields) < 2 {
+			return nil, fmt.Errorf("invalid HTTPS record value: %q (expected <priority> <target> [value])", r.Value)
+		}
+
+		prio, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid HTTPS priority %q: %w", fields[0], err)
+		}
+
+		var val string
+
+		if len(fields) > 2 {
+			val = strings.Join(fields[2:], " ")
+		}
+
+		return dns.HTTPSRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.HTTPSRecordTypeHTTPS),
+			Data: cloudflare.F(dns.HTTPSRecordDataParam{
+				Priority: cloudflare.F(prio),
+				Target:   cloudflare.F(fields[1]),
+				Value:    cloudflare.F(val),
+			}),
+		}, nil
+	case "LOC":
+		return dns.RecordEditParamsBody{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.RecordEditParamsBodyTypeLOC),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	case "NAPTR":
+		if len(fields) < 6 {
+			return nil, fmt.Errorf("invalid NAPTR record value: %q (expected <order> <preference> <flags> <service> <regex> <replacement>)", r.Value)
+		}
+
+		order, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid NAPTR order %q: %w", fields[0], err)
+		}
+
+		pref, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid NAPTR preference %q: %w", fields[1], err)
+		}
+
+		return dns.NAPTRRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.NAPTRRecordTypeNAPTR),
+			Data: cloudflare.F(dns.NAPTRRecordDataParam{
+				Order:       cloudflare.F(order),
+				Preference:  cloudflare.F(pref),
+				Flags:       cloudflare.F(fields[2]),
+				Service:     cloudflare.F(fields[3]),
+				Regex:       cloudflare.F(fields[4]),
+				Replacement: cloudflare.F(fields[5]),
+			}),
+		}, nil
+	case "SMIMEA":
+		if len(fields) < 4 {
+			return nil, fmt.Errorf("invalid SMIMEA record value: %q (expected <usage> <selector> <matching_type> <certificate>)", r.Value)
+		}
+
+		usage, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SMIMEA usage %q: %w", fields[0], err)
+		}
+
+		selector, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SMIMEA selector %q: %w", fields[1], err)
+		}
+
+		matchType, err := strconv.ParseFloat(fields[2], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SMIMEA matching_type %q: %w", fields[2], err)
+		}
+
+		return dns.SMIMEARecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.SMIMEARecordTypeSMIMEA),
+			Data: cloudflare.F(dns.SMIMEARecordDataParam{
+				Usage:        cloudflare.F(usage),
+				Selector:     cloudflare.F(selector),
+				MatchingType: cloudflare.F(matchType),
+				Certificate:  cloudflare.F(fields[3]),
+			}),
+		}, nil
+	case "SRV":
+		if len(fields) < 4 {
+			return nil, fmt.Errorf("invalid SRV record value: %q (expected <priority> <weight> <port> <target>)", r.Value)
+		}
+
+		priority, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SRV priority %q: %w", fields[0], err)
+		}
+
+		weight, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SRV weight %q: %w", fields[1], err)
+		}
+
+		port, err := strconv.ParseFloat(fields[2], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SRV port %q: %w", fields[2], err)
+		}
+
+		return dns.SRVRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.SRVRecordTypeSRV),
+			Data: cloudflare.F(dns.SRVRecordDataParam{
+				Priority: cloudflare.F(priority),
+				Weight:   cloudflare.F(weight),
+				Port:     cloudflare.F(port),
+				Target:   cloudflare.F(fields[3]),
+			}),
+		}, nil
+	case "SSHFP":
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("invalid SSHFP record value: %q (expected <algorithm> <type> <fingerprint>)", r.Value)
+		}
+
+		algo, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SSHFP algorithm %q: %w", fields[0], err)
+		}
+
+		fpType, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SSHFP type %q: %w", fields[1], err)
+		}
+
+		return dns.SSHFPRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.SSHFPRecordTypeSSHFP),
+			Data: cloudflare.F(dns.SSHFPRecordDataParam{
+				Algorithm:   cloudflare.F(algo),
+				Type:        cloudflare.F(fpType),
+				Fingerprint: cloudflare.F(fields[2]),
+			}),
+		}, nil
+	case "SVCB":
+		if len(fields) < 2 {
+			return nil, fmt.Errorf("invalid SVCB record value: %q (expected <priority> <target> [value])", r.Value)
+		}
+
+		prio, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid SVCB priority %q: %w", fields[0], err)
+		}
+
+		var val string
+
+		if len(fields) > 2 {
+			val = strings.Join(fields[2:], " ")
+		}
+
+		return dns.SVCBRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.SVCBRecordTypeSVCB),
+			Data: cloudflare.F(dns.SVCBRecordDataParam{
+				Priority: cloudflare.F(prio),
+				Target:   cloudflare.F(fields[1]),
+				Value:    cloudflare.F(val),
+			}),
+		}, nil
+	case "TLSA":
+		if len(fields) < 4 {
+			return nil, fmt.Errorf("invalid TLSA record value: %q (expected <usage> <selector> <matching_type> <certificate>)", r.Value)
+		}
+
+		usage, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TLSA usage %q: %w", fields[0], err)
+		}
+
+		selector, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TLSA selector %q: %w", fields[1], err)
+		}
+
+		matchType, err := strconv.ParseFloat(fields[2], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid TLSA matching_type %q: %w", fields[2], err)
+		}
+
+		return dns.TLSARecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.TLSARecordTypeTLSA),
+			Data: cloudflare.F(dns.TLSARecordDataParam{
+				Usage:        cloudflare.F(usage),
+				Selector:     cloudflare.F(selector),
+				MatchingType: cloudflare.F(matchType),
+				Certificate:  cloudflare.F(fields[3]),
+			}),
+		}, nil
+	case "URI":
+		if len(fields) < 3 {
+			return nil, fmt.Errorf("invalid URI record value: %q (expected <priority> <weight> <target>)", r.Value)
+		}
+
+		prio, err := strconv.ParseFloat(fields[0], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URI priority %q: %w", fields[0], err)
+		}
+
+		weight, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid URI weight %q: %w", fields[1], err)
+		}
+
+		return dns.URIRecordParam{
+			Name:     cloudflare.F(r.Name),
+			TTL:      cloudflare.F(dns.TTL(r.TTL)),
+			Type:     cloudflare.F(dns.URIRecordTypeURI),
+			Priority: cloudflare.F(prio),
+			Data: cloudflare.F(dns.URIRecordDataParam{
+				Weight: cloudflare.F(weight),
+				Target: cloudflare.F(fields[2]),
+			}),
+		}, nil
+	case "OPENPGPKEY":
+		return dns.RecordEditParamsBodyDNSRecordsOpenpgpkeyRecord{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.RecordEditParamsBodyDNSRecordsOpenpgpkeyRecordTypeOpenpgpkey),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	}
+
+	return nil, fmt.Errorf("unsupported record type: %q", r.Type)
+}
+
+func FormatRecordResponse(resp dns.RecordResponse) string {
+	switch u := resp.AsUnion().(type) {
+	case dns.RecordResponseA:
+		return u.Content
+	case dns.RecordResponseAAAA:
+		return u.Content
+	case dns.RecordResponseCNAME:
+		return u.Content
+	case dns.RecordResponseMX:
+		return fmt.Sprintf("%.0f %s", u.Priority, u.Content)
+	case dns.RecordResponseNS:
+		return u.Content
+	case dns.RecordResponseOpenpgpkey:
+		return u.Content
+	case dns.RecordResponsePTR:
+		return u.Content
+	case dns.RecordResponseTXT:
+		return formatTXT(u.Content)
+	case dns.RecordResponseCAA:
+		return fmt.Sprintf("%.0f %s %q", u.Data.Flags, u.Data.Tag, u.Data.Value)
+	case dns.RecordResponseCERT:
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Type, u.Data.KeyTag, u.Data.Algorithm, u.Data.Certificate)
+	case dns.RecordResponseDNSKEY:
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Flags, u.Data.Protocol, u.Data.Algorithm, u.Data.PublicKey)
+	case dns.RecordResponseDS:
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.KeyTag, u.Data.Algorithm, u.Data.DigestType, u.Data.Digest)
+	case dns.RecordResponseHTTPS:
+		target := u.Data.Target
+		if target == "" {
+			target = "."
+		}
+
+		if u.Data.Value != "" {
+			return fmt.Sprintf("%.0f %s %s", u.Data.Priority, target, u.Data.Value)
+		}
+
+		return fmt.Sprintf("%.0f %s", u.Data.Priority, target)
+	case dns.RecordResponseLOC:
+		return u.Content
+	case dns.RecordResponseNAPTR:
+		return fmt.Sprintf("%.0f %.0f %q %q %q %s", u.Data.Order, u.Data.Preference, u.Data.Flags, u.Data.Service, u.Data.Regex, u.Data.Replacement)
+	case dns.RecordResponseSMIMEA:
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate)
+	case dns.RecordResponseSRV:
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Priority, u.Data.Weight, u.Data.Port, u.Data.Target)
+	case dns.RecordResponseSSHFP:
+		return fmt.Sprintf("%.0f %.0f %s", u.Data.Algorithm, u.Data.Type, u.Data.Fingerprint)
+	case dns.RecordResponseSVCB:
+		target := u.Data.Target
+		if target == "" {
+			target = "."
+		}
+
+		if u.Data.Value != "" {
+			return fmt.Sprintf("%.0f %s %s", u.Data.Priority, target, u.Data.Value)
+		}
+
+		return fmt.Sprintf("%.0f %s", u.Data.Priority, target)
+	case dns.RecordResponseTLSA:
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate)
+	case dns.RecordResponseURI:
+		return fmt.Sprintf("%.0f %.0f %q", u.Priority, u.Data.Weight, u.Data.Target)
+	}
+
+	return resp.Content
+}
+
+func formatTXT(content string) string {
+	if len(content) >= 2 && content[0] == '"' && content[len(content)-1] == '"' {
+		return content
+	}
+
+	return fmt.Sprintf("%q", content)
+}
+
+func parseFields(s string) []string {
+	var (
+		fields   []string
+		current  strings.Builder
+		inQuotes bool
+		escaped  bool
+	)
+
+	for i := 0; i < len(s); i++ {
+		r := s[i]
+
+		if escaped {
+			current.WriteByte(r)
+
+			escaped = false
+
+			continue
+		}
+
+		if r == '\\' {
+			escaped = true
+
+			continue
+		}
+
+		if r == '"' {
+			inQuotes = !inQuotes
+
+			continue
+		}
+
+		if unicode.IsSpace(rune(r)) && !inQuotes {
+			if current.Len() > 0 {
+				fields = append(fields, current.String())
+
+				current.Reset()
+			}
+		} else {
+			current.WriteByte(r)
+		}
+	}
+
+	if current.Len() > 0 {
+		fields = append(fields, current.String())
+	}
+
+	return fields
 }

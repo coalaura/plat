@@ -8,8 +8,9 @@ import (
 type Zone struct {
 	mx sync.RWMutex
 
-	Name    string            `yaml:"name"`
-	Records map[string]Record `yaml:"-"`
+	ID      string             `yaml:"id"`
+	Name    string             `yaml:"name"`
+	Records map[string]*Record `yaml:"-"`
 }
 
 type zoneData struct {
@@ -21,7 +22,7 @@ func (z *Zone) RecordsList() []Record {
 	records := make([]Record, 0, len(z.Records))
 
 	for _, rec := range z.Records {
-		records = append(records, rec)
+		records = append(records, *rec)
 	}
 
 	sort.Slice(records, func(i, j int) bool {
@@ -44,10 +45,10 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 	}
 
 	z.Name = data.Name
-	z.Records = make(map[string]Record, len(data.Records))
+	z.Records = make(map[string]*Record, len(data.Records))
 
 	for _, rec := range data.Records {
-		z.Records[rec.Name] = rec
+		z.Records[rec.Name] = &rec
 	}
 
 	return nil

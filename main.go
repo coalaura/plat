@@ -44,11 +44,11 @@ func main() {
 	r.Get("/-/info", func(w http.ResponseWriter, r *http.Request) {
 		var (
 			authenticated = isAuthenticated(config, r)
-			zones         []string
+			zones         map[string]string
 		)
 
 		if authenticated {
-			zones = storage.GetZoneNames()
+			zones = storage.GetZones()
 		}
 
 		okay(w, map[string]any{

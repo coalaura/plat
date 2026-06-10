@@ -70,7 +70,7 @@ func HandleSetRecord(storage *Storage, override bool) http.HandlerFunc {
 			return
 		}
 
-		err = storage.SetRecord(zone, record, override)
+		err = storage.SetRecord(zone, &record, override)
 		if err != nil {
 			abort(w, http.StatusInternalServerError, err.Error())
 

@@ -8,20 +8,18 @@ import (
 	"os"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 
 	"github.com/coalaura/etch"
 	"github.com/coalaura/tape"
 	"github.com/goccy/go-yaml"
-	"github.com/libdns/cloudflare"
 )
 
 type Storage struct {
 	mx sync.RWMutex
 	fx sync.Mutex
 
-	provider cloudflare.Provider
+	client *CloudflareClient
 
 	zoneNames []string
 	zoneMap   map[string]*Zone
@@ -29,9 +27,7 @@ type Storage struct {
 
 func LoadStorage(config *Config) (*Storage, error) {
 	storage := Storage{
-		provider: cloudflare.Provider{
-			APIToken: config.Cloudflare.Token,
-		},
+		client: NewCloudflareClient(config.Cloudflare.Token),
 
 		zoneMap: make(map[string]*Zone),
 	}
@@ -55,11 +51,17 @@ func LoadStorage(config *Config) (*Storage, error) {
 	return &storage, nil
 }
 
-func (s *Storage) GetZoneNames() []string {
+func (s *Storage) GetZones() map[string]string {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
-	return s.zoneNames
+	zones := make(map[string]string, len(s.zoneMap))
+
+	for id, zone := range s.zoneMap {
+		zones[id] = zone.Name
+	}
+
+	return zones
 }
 
 func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
@@ -80,14 +82,14 @@ func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
 	return zone.RecordsList(), nil
 }
 
-func (s *Storage) GetRecord(zoneName string, id string) (Record, error) {
+func (s *Storage) GetRecord(zoneName string, id string) (*Record, error) {
 	s.mx.RLock()
 
 	zone, exists := s.zoneMap[zoneName]
 	if !exists {
 		s.mx.RUnlock()
 
-		return Record{}, fmt.Errorf("unknown zone %q", zoneName)
+		return nil, fmt.Errorf("unknown zone %q", zoneName)
 	}
 
 	zone.mx.RLock()
@@ -97,13 +99,13 @@ func (s *Storage) GetRecord(zoneName string, id string) (Record, error) {
 
 	rec, exists := zone.Records[id]
 	if !exists {
-		return Record{}, errors.New("record not found")
+		return nil, errors.New("record not found")
 	}
 
 	return rec, nil
 }
 
-func (s *Storage) SetRecord(zoneName string, record Record, override bool) error {
+func (s *Storage) SetRecord(zoneName string, record *Record, override bool) error {
 	s.mx.RLock()
 
 	zone, exists := s.zoneMap[zoneName]
@@ -154,15 +156,13 @@ func (s *Storage) UnsetRecord(zoneName string, id string) error {
 }
 
 func (s *Storage) FetchZones() error {
-	zones, err := s.provider.ListZones(context.Background())
+	zones, err := s.client.ListZones(context.Background())
 	if err != nil {
 		return err
 	}
 
 	s.mx.Lock()
 	defer s.mx.Unlock()
-
-	s.zoneNames = make([]string, 0, len(zones))
 
 	for name, zone := range s.zoneMap {
 		zone.mx.RLock()
@@ -174,45 +174,19 @@ func (s *Storage) FetchZones() error {
 		}
 	}
 
+	s.zoneNames = make([]string, 0, len(zones))
+
 	for _, zone := range zones {
 		s.zoneNames = append(s.zoneNames, zone.Name)
 	}
 
 	sort.Strings(s.zoneNames)
 
-	for _, name := range s.zoneNames {
-		if _, ok := s.zoneMap[name]; ok {
-			continue
-		}
-
-		s.zoneMap[name] = &Zone{
-			Name:    strings.TrimSuffix(name, "."),
-			Records: make(map[string]Record),
-		}
-	}
-
-	return nil
-}
-
-func (s *Storage) FetchAllRecords(override bool) error {
-	s.mx.RLock()
-	names := s.zoneNames
-	s.mx.RUnlock()
-
-	for i, name := range names {
-		log.Printf("Fetching %d/%d...\r", i+1, len(names))
-
-		err := s.FetchRecords(name, override)
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
 func (s *Storage) FetchRecords(zoneName string, override bool) error {
-	records, err := s.provider.GetRecords(context.Background(), zoneName)
+	records, err := s.client.GetRecords(context.Background(), zoneName)
 	if err != nil {
 		return err
 	}
@@ -227,13 +201,9 @@ func (s *Storage) FetchRecords(zoneName string, override bool) error {
 	}
 
 	zone.mx.Lock()
-	defer zone.mx.Unlock()
-
 	s.mx.RUnlock()
 
-	for _, lr := range records {
-		record := FromLibdns(lr)
-
+	for _, record := range records {
 		if !override {
 			if _, exists := zone.Records[record.ID]; exists {
 				continue
@@ -243,7 +213,9 @@ func (s *Storage) FetchRecords(zoneName string, override bool) error {
 		zone.Records[record.ID] = record
 	}
 
-	return nil
+	zone.mx.Unlock()
+
+	return s.Store()
 }
 
 func (s *Storage) Store() error {
