@@ -307,7 +307,7 @@ function recordTypeConfig(type) {
 				{ key: "tag", label: "Tag", placeholder: "issue", required: true, hint: "issue, issuewild, or iodef." },
 				{ key: "value", label: "Value", placeholder: "letsencrypt.org", required: true, hint: "CA domain or reporting URL." },
 			],
-			build: data => `${data.flags} ${data.tag} ${quote(data.value)}`,
+			build: data => `${data.flags} ${data.tag} ${quote(data.content)}`,
 			parse: value => parseWithRemainder(value, ["flags", "tag"], "value"),
 		},
 		SRV: {
@@ -456,7 +456,7 @@ function recordTypeConfig(type) {
 		map[type] || {
 			description: "Raw record value.",
 			fields: [{ key: "value", label: "Value", placeholder: "", required: true, hint: "Raw record value.", multiline: true, wide: true, rows: 4 }],
-			build: data => data.value,
+			build: data => data.content,
 			parse: value => ({ value: value }),
 		}
 	);
@@ -882,10 +882,10 @@ function parseFormRecord(formData, currentRecord) {
 		throw new Error("TTL must be a positive number.");
 	}
 
-	let value = "";
+	let content = "";
 
 	if (mode === "raw") {
-		value = String(formData.get("rawValue") || "").trim();
+		content = String(formData.get("rawValue") || "").trim();
 	} else {
 		const config = recordTypeConfig(type),
 			fieldData = {};
@@ -901,10 +901,10 @@ function parseFormRecord(formData, currentRecord) {
 			fieldData[field.key] = current;
 		}
 
-		value = config.build(fieldData).trim();
+		content = config.build(fieldData).trim();
 	}
 
-	if (!value) {
+	if (!content) {
 		throw new Error("Record value cannot be empty.");
 	}
 
@@ -912,7 +912,7 @@ function parseFormRecord(formData, currentRecord) {
 		id: currentRecord?.id || randomId(),
 		type: type,
 		name: name,
-		value: value,
+		content: content,
 		ttl: ttl,
 	};
 }
@@ -985,7 +985,7 @@ function openRecordModal(currentRecord) {
 
 	rawInput.name = "rawValue";
 	rawInput.rows = 4;
-	rawInput.value = currentRecord?.value || "";
+	rawInput.value = currentRecord?.content || "";
 
 	const nameField = make("label", "field"),
 		nameTitle = make("span", "field-title"),
@@ -1384,7 +1384,7 @@ function recordTags(record) {
 }
 
 function recordDetails(record) {
-	const parts = splitTokens(record.value);
+	const parts = splitTokens(record.content);
 
 	switch (record.type) {
 		case "MX":
@@ -1503,7 +1503,7 @@ function createRecords() {
 		row.append(
 			createCell(displayRecordName(record, activeZoneName()), ["mono", "w-name"]),
 			createCell(record.type, ["mono", "w-type"]),
-			createCell(record.value, ["value", "w-content"]),
+			createCell(record.content, ["value", "w-content"]),
 			createCell(!record.ttl || record.ttl === 1 ? "auto" : `${record.ttl}s`, ["mono", "w-ttl"]),
 			createCell(recordTags(record), ["w-tags"]),
 			createCell(recordDetails(record), ["mono", "w-details"])

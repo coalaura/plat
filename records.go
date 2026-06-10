@@ -12,11 +12,11 @@ import (
 // A, AAAA, CAA, CERT, CNAME, DNSKEY, DS, HTTPS, LOC, MX, NAPTR, NS, OPENPGPKEY, PTR, SMIMEA, SRV, SSHFP, SVCB, TLSA, TXT, URI
 
 type Record struct {
-	ID    string `yaml:"id" json:"id"`
-	Type  string `yaml:"type" json:"type"`
-	Name  string `yaml:"name" json:"name"`
-	Value string `yaml:"value" json:"value"`
-	TTL   int64  `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+	ID      string `yaml:"id" json:"id"`
+	Type    string `yaml:"type" json:"type"`
+	Name    string `yaml:"name" json:"name"`
+	Content string `yaml:"content" json:"content"`
+	TTL     int64  `yaml:"ttl,omitempty" json:"ttl,omitempty"`
 }
 
 func (r Record) FullName(zoneName string) string {
@@ -27,6 +27,16 @@ func (r Record) FullName(zoneName string) string {
 	return r.Name + "." + zoneName
 }
 
+func (r Record) Equals(r2 Record) bool {
+	if r.Name != r2.Name || r.Type != r2.Type {
+		return false
+	} else if r.TTL != r2.TTL {
+		return false
+	}
+
+	return r.Content == r2.Content
+}
+
 func (r Record) ToCloudflareNew() (dns.RecordNewParamsBodyUnion, error) {
 	// OPENPGPKEY is missing a regular RecordParam
 	if strings.EqualFold(r.Type, "OPENPGPKEY") {
@@ -34,7 +44,7 @@ func (r Record) ToCloudflareNew() (dns.RecordNewParamsBodyUnion, error) {
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.RecordNewParamsBodyTypeOpenpgpkey),
-			Content: cloudflare.F(r.Value),
+			Content: cloudflare.F(r.Content),
 		}, nil
 	}
 
@@ -53,7 +63,7 @@ func (r Record) ToCloudflareEdit() (dns.RecordEditParamsBodyUnion, error) {
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.RecordEditParamsBodyTypeOpenpgpkey),
-			Content: cloudflare.F(r.Value),
+			Content: cloudflare.F(r.Content),
 		}, nil
 	}
 
@@ -66,7 +76,7 @@ func (r Record) ToCloudflareEdit() (dns.RecordEditParamsBodyUnion, error) {
 }
 
 func (r Record) ToCloudflare() (any, error) {
-	fields := parseFields(r.Value)
+	fields := parseFields(r.Content)
 
 	switch strings.ToUpper(r.Type) {
 	case "A":
@@ -74,25 +84,25 @@ func (r Record) ToCloudflare() (any, error) {
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.ARecordTypeA),
-			Content: cloudflare.F(r.Value),
+			Content: cloudflare.F(r.Content),
 		}, nil
 	case "AAAA":
 		return dns.AAAARecordParam{
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.AAAARecordTypeAAAA),
-			Content: cloudflare.F(r.Value),
+			Content: cloudflare.F(r.Content),
 		}, nil
 	case "CNAME":
 		return dns.CNAMERecordParam{
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.CNAMERecordTypeCNAME),
-			Content: cloudflare.F(r.Value),
+			Content: cloudflare.F(r.Content),
 		}, nil
 	case "MX":
 		if len(fields) < 2 {
-			return nil, fmt.Errorf("invalid MX record value: %q (expected <priority> <mail-server>)", r.Value)
+			return nil, fmt.Errorf("invalid MX record value: %q (expected <priority> <mail-server>)", r.Content)
 		}
 
 		prio, err := strconv.ParseFloat(fields[0], 64)
@@ -112,17 +122,17 @@ func (r Record) ToCloudflare() (any, error) {
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.NSRecordTypeNS),
-			Content: cloudflare.F(r.Value),
+			Content: cloudflare.F(r.Content),
 		}, nil
 	case "PTR":
 		return dns.PTRRecordParam{
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.PTRRecordTypePTR),
-			Content: cloudflare.F(r.Value),
+			Content: cloudflare.F(r.Content),
 		}, nil
 	case "TXT":
-		text := formatTXT(r.Value)
+		text := formatTXT(r.Content)
 
 		return dns.TXTRecordParam{
 			Name:    cloudflare.F(r.Name),
@@ -132,7 +142,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "CAA":
 		if len(fields) < 3 {
-			return nil, fmt.Errorf("invalid CAA record value: %q (expected <flags> <tag> <value>)", r.Value)
+			return nil, fmt.Errorf("invalid CAA record value: %q (expected <flags> <tag> <value>)", r.Content)
 		}
 
 		flags, err := strconv.ParseFloat(fields[0], 64)
@@ -152,7 +162,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "CERT":
 		if len(fields) < 4 {
-			return nil, fmt.Errorf("invalid CERT record value: %q (expected <type> <key_tag> <algorithm> <certificate>)", r.Value)
+			return nil, fmt.Errorf("invalid CERT record value: %q (expected <type> <key_tag> <algorithm> <certificate>)", r.Content)
 		}
 
 		certType, err := strconv.ParseFloat(fields[0], 64)
@@ -183,7 +193,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "DNSKEY":
 		if len(fields) < 4 {
-			return nil, fmt.Errorf("invalid DNSKEY record value: %q (expected <flags> <protocol> <algorithm> <public_key>)", r.Value)
+			return nil, fmt.Errorf("invalid DNSKEY record value: %q (expected <flags> <protocol> <algorithm> <public_key>)", r.Content)
 		}
 
 		flags, err := strconv.ParseFloat(fields[0], 64)
@@ -214,7 +224,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "DS":
 		if len(fields) < 4 {
-			return nil, fmt.Errorf("invalid DS record value: %q (expected <key_tag> <algorithm> <digest_type> <digest>)", r.Value)
+			return nil, fmt.Errorf("invalid DS record value: %q (expected <key_tag> <algorithm> <digest_type> <digest>)", r.Content)
 		}
 
 		keyTag, err := strconv.ParseFloat(fields[0], 64)
@@ -245,7 +255,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "HTTPS":
 		if len(fields) < 2 {
-			return nil, fmt.Errorf("invalid HTTPS record value: %q (expected <priority> <target> [value])", r.Value)
+			return nil, fmt.Errorf("invalid HTTPS record value: %q (expected <priority> <target> [value])", r.Content)
 		}
 
 		prio, err := strconv.ParseFloat(fields[0], 64)
@@ -270,7 +280,7 @@ func (r Record) ToCloudflare() (any, error) {
 			}),
 		}, nil
 	case "LOC":
-		data, err := parseLOC(r.Value)
+		data, err := parseLOC(r.Content)
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +293,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "NAPTR":
 		if len(fields) < 6 {
-			return nil, fmt.Errorf("invalid NAPTR record value: %q (expected <order> <preference> <flags> <service> <regex> <replacement>)", r.Value)
+			return nil, fmt.Errorf("invalid NAPTR record value: %q (expected <order> <preference> <flags> <service> <regex> <replacement>)", r.Content)
 		}
 
 		order, err := strconv.ParseFloat(fields[0], 64)
@@ -311,7 +321,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "SMIMEA":
 		if len(fields) < 4 {
-			return nil, fmt.Errorf("invalid SMIMEA record value: %q (expected <usage> <selector> <matching_type> <certificate>)", r.Value)
+			return nil, fmt.Errorf("invalid SMIMEA record value: %q (expected <usage> <selector> <matching_type> <certificate>)", r.Content)
 		}
 
 		usage, err := strconv.ParseFloat(fields[0], 64)
@@ -342,7 +352,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "SRV":
 		if len(fields) < 4 {
-			return nil, fmt.Errorf("invalid SRV record value: %q (expected <priority> <weight> <port> <target>)", r.Value)
+			return nil, fmt.Errorf("invalid SRV record value: %q (expected <priority> <weight> <port> <target>)", r.Content)
 		}
 
 		priority, err := strconv.ParseFloat(fields[0], 64)
@@ -373,7 +383,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "SSHFP":
 		if len(fields) < 3 {
-			return nil, fmt.Errorf("invalid SSHFP record value: %q (expected <algorithm> <type> <fingerprint>)", r.Value)
+			return nil, fmt.Errorf("invalid SSHFP record value: %q (expected <algorithm> <type> <fingerprint>)", r.Content)
 		}
 
 		algo, err := strconv.ParseFloat(fields[0], 64)
@@ -398,7 +408,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "SVCB":
 		if len(fields) < 2 {
-			return nil, fmt.Errorf("invalid SVCB record value: %q (expected <priority> <target> [value])", r.Value)
+			return nil, fmt.Errorf("invalid SVCB record value: %q (expected <priority> <target> [value])", r.Content)
 		}
 
 		prio, err := strconv.ParseFloat(fields[0], 64)
@@ -424,7 +434,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "TLSA":
 		if len(fields) < 4 {
-			return nil, fmt.Errorf("invalid TLSA record value: %q (expected <usage> <selector> <matching_type> <certificate>)", r.Value)
+			return nil, fmt.Errorf("invalid TLSA record value: %q (expected <usage> <selector> <matching_type> <certificate>)", r.Content)
 		}
 
 		usage, err := strconv.ParseFloat(fields[0], 64)
@@ -455,7 +465,7 @@ func (r Record) ToCloudflare() (any, error) {
 		}, nil
 	case "URI":
 		if len(fields) < 3 {
-			return nil, fmt.Errorf("invalid URI record value: %q (expected <priority> <weight> <target>)", r.Value)
+			return nil, fmt.Errorf("invalid URI record value: %q (expected <priority> <weight> <target>)", r.Content)
 		}
 
 		prio, err := strconv.ParseFloat(fields[0], 64)

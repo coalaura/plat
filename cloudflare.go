@@ -86,11 +86,11 @@ func (c *CloudflareClient) GetRecords(ctx context.Context, zoneId, zoneName stri
 			}
 
 			list = append(list, &Record{
-				ID:    result.ID,
-				Type:  string(result.Type),
-				Name:  name,
-				Value: value,
-				TTL:   int64(result.TTL),
+				ID:      result.ID,
+				Type:    string(result.Type),
+				Name:    name,
+				Content: value,
+				TTL:     int64(result.TTL),
 			})
 		}
 
