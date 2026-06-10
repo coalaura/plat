@@ -1572,7 +1572,7 @@ function createZones() {
 	refresh.type = "button";
 	refresh.textContent = state.reloadingZones ? "Reloading..." : "Reload";
 	refresh.disabled = state.reloadingZones || isUiLocked();
-	refresh.addEventListener("click", onReloadInfoClick);
+	refresh.addEventListener("click", onReloadZonesClick);
 
 	top.append(title, refresh);
 
@@ -2046,7 +2046,7 @@ function onLogoutClick() {
 	render();
 }
 
-async function onReloadInfoClick() {
+async function onReloadZonesClick() {
 	if (isUiLocked()) {
 		return;
 	}
@@ -2060,7 +2060,30 @@ async function onReloadInfoClick() {
 	renderZones();
 
 	try {
-		await checkInfo();
+		const zones = await api("/-/zones", { method: "PATCH" });
+
+		state.zones = zones && typeof zones === "object" && !Array.isArray(zones) ? zones : {};
+
+		if (!Object.keys(state.zones).length) {
+			state.activeZone = "";
+			state.records = [];
+
+			setZoneHash("");
+		} else if (!state.activeZone || !state.zones[state.activeZone]) {
+			const hashZone = zoneFromHash();
+
+			if (hashZone && state.zones[hashZone]) {
+				state.activeZone = hashZone;
+			} else {
+				state.activeZone = zoneEntries()[0][0];
+			}
+
+			state.records = [];
+
+			setZoneHash(state.activeZone);
+		}
+
+		renderZones();
 
 		setStatus("Zone list updated.", false);
 	} catch (err) {
