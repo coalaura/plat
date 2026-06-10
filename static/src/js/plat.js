@@ -38,6 +38,7 @@ const state = {
 	savingRecord: false,
 	deletingRecordId: "",
 	reloadingZones: false,
+	fetchingAllRecords: false,
 };
 
 const ui = {
@@ -50,6 +51,14 @@ const ui = {
 	notificationItems: new Map(),
 	notificationTimers: new Map(),
 	notificationRoot: null,
+	fetchAllOverlay: null,
+	fetchAllSummary: null,
+	fetchAllLog: null,
+	fetchAllProgressBar: null,
+	fetchAllProgressText: null,
+	fetchAllCloseButton: null,
+	fetchAllCancelButton: null,
+	fetchAllAbortController: null,
 };
 
 function make(tag, ...classes) {
@@ -606,6 +615,217 @@ function clearNotifications() {
 	}
 }
 
+function ensureFetchAllOverlay() {
+	if (ui.fetchAllOverlay) {
+		return;
+	}
+
+	const overlay = make("div", "fetch-all-overlay"),
+		panel = make("div", "fetch-all-panel"),
+		title = make("h2", "fetch-all-title"),
+		summary = make("p", "fetch-all-summary"),
+		progress = make("div", "fetch-all-progress"),
+		progressBar = make("div", "fetch-all-progress-bar"),
+		progressFill = make("div", "fetch-all-progress-fill"),
+		progressText = make("p", "fetch-all-progress-text"),
+		log = make("p", "fetch-all-log"),
+		actions = make("div", "fetch-all-actions"),
+		cancelButton = make("button", "ghost", "danger"),
+		closeButton = make("button", "ghost");
+
+	title.textContent = "Fetching all zones";
+
+	cancelButton.type = "button";
+	cancelButton.textContent = "Cancel";
+	cancelButton.addEventListener("click", onFetchAllCancelClick);
+
+	closeButton.type = "button";
+	closeButton.textContent = "Close";
+	closeButton.addEventListener("click", closeFetchAllOverlay);
+
+	progressBar.append(progressFill);
+
+	progress.append(progressBar, progressText);
+
+	actions.append(cancelButton, closeButton);
+
+	panel.append(title, summary, progress, log, actions);
+
+	overlay.append(panel);
+
+	document.body.append(overlay);
+
+	ui.fetchAllOverlay = overlay;
+	ui.fetchAllSummary = summary;
+	ui.fetchAllLog = log;
+	ui.fetchAllProgressBar = progressFill;
+	ui.fetchAllProgressText = progressText;
+	ui.fetchAllCloseButton = closeButton;
+	ui.fetchAllCancelButton = cancelButton;
+}
+
+function openFetchAllOverlay() {
+	ensureFetchAllOverlay();
+
+	ui.fetchAllOverlay.classList.remove("ok", "error");
+	ui.fetchAllOverlay.classList.add("running");
+	ui.fetchAllSummary.textContent = "Starting full sync...";
+
+	setFetchAllProgress(0, 0);
+	setFetchAllLog("Waiting for server progress...", "");
+
+	ui.fetchAllCancelButton.classList.remove("hidden");
+	ui.fetchAllCancelButton.disabled = false;
+	ui.fetchAllCloseButton.disabled = true;
+	ui.fetchAllOverlay.classList.add("active");
+}
+
+function closeFetchAllOverlay() {
+	if (!ui.fetchAllOverlay) {
+		return;
+	}
+
+	ui.fetchAllOverlay.classList.remove("active");
+}
+
+function setFetchAllSummary(text) {
+	if (!ui.fetchAllSummary) {
+		return;
+	}
+
+	ui.fetchAllSummary.textContent = text;
+}
+
+function setFetchAllProgress(index, total) {
+	if (!ui.fetchAllProgressBar || !ui.fetchAllProgressText) {
+		return;
+	}
+
+	if (!total || total < 1) {
+		ui.fetchAllProgressBar.style.width = "0%";
+		ui.fetchAllProgressText.textContent = "Preparing...";
+
+		return;
+	}
+
+	const safeIndex = Math.max(0, Math.min(index, total)),
+		percent = Math.round((safeIndex / total) * 100);
+
+	ui.fetchAllProgressBar.style.width = `${percent}%`;
+	ui.fetchAllProgressText.textContent = `${safeIndex}/${total} (${percent}%)`;
+}
+
+function setFetchAllLog(text, type = "") {
+	if (!ui.fetchAllLog) {
+		return;
+	}
+
+	ui.fetchAllLog.className = "fetch-all-log";
+
+	if (type) {
+		ui.fetchAllLog.classList.add(type);
+	}
+
+	ui.fetchAllLog.textContent = text;
+}
+
+function setFetchAllResult(status, summary, log) {
+	if (!ui.fetchAllOverlay || !ui.fetchAllCloseButton || !ui.fetchAllCancelButton) {
+		return;
+	}
+
+	ui.fetchAllOverlay.classList.remove("running", "ok", "error");
+	ui.fetchAllOverlay.classList.add(status);
+
+	setFetchAllSummary(summary);
+	setFetchAllLog(log, status === "ok" ? "ok" : "error");
+
+	ui.fetchAllCancelButton.classList.add("hidden");
+	ui.fetchAllCloseButton.disabled = false;
+}
+
+function onFetchAllCancelClick() {
+	if (!ui.fetchAllAbortController || !ui.fetchAllCancelButton) {
+		return;
+	}
+
+	ui.fetchAllCancelButton.disabled = true;
+	setFetchAllSummary("Canceling...");
+	setFetchAllLog("Cancel requested. Waiting for backend to stop...");
+
+	ui.fetchAllAbortController.abort();
+}
+
+async function streamNDJson(path, options, onMessage) {
+	const headers = options.headers ? { ...options.headers } : {};
+
+	if (state.token) {
+		headers.Authorization = `Bearer ${state.token}`;
+	}
+
+	const response = await fetch(path, {
+		...options,
+		headers: headers,
+	});
+
+	if (!response.ok) {
+		const text = await response.text();
+
+		let payload = null;
+
+		try {
+			payload = JSON.parse(text);
+		} catch {
+			payload = null;
+		}
+
+		throw new Error(payload?.error || text || `Request failed (${response.status})`);
+	}
+
+	if (!response.body) {
+		throw new Error("Streaming response not available.");
+	}
+
+	const reader = response.body.getReader(),
+		decoder = new TextDecoder();
+
+	let buffer = "";
+
+	while (true) {
+		const { value, done } = await reader.read();
+
+		buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+		let newlineIndex = buffer.indexOf("\n");
+
+		while (newlineIndex !== -1) {
+			const line = buffer.slice(0, newlineIndex).trim();
+
+			buffer = buffer.slice(newlineIndex + 1);
+
+			if (line) {
+				onMessage(JSON.parse(line));
+			}
+
+			newlineIndex = buffer.indexOf("\n");
+		}
+
+		if (done) {
+			break;
+		}
+	}
+
+	const tail = buffer.trim();
+
+	if (tail) {
+		onMessage(JSON.parse(tail));
+	}
+}
+
+function isUiLocked() {
+	return state.fetchingAllRecords;
+}
+
 function applyTheme() {
 	const theme = state.theme === "light" ? "light" : "dark";
 
@@ -758,6 +978,82 @@ async function refreshZoneFromCloudflare() {
 	} finally {
 		state.syncingRecords = false;
 
+		renderRecords();
+	}
+}
+
+async function fetchAllZonesFromCloudflare() {
+	if (state.fetchingAllRecords) {
+		return;
+	}
+
+	state.fetchingAllRecords = true;
+
+	renderHeader();
+	renderZones();
+	renderRecords();
+
+	openFetchAllOverlay();
+
+	setFetchAllLog("Started full zone sync.");
+
+	try {
+		let lastIndex = 0,
+			lastTotal = 0;
+
+		ui.fetchAllAbortController = new AbortController();
+
+		await streamNDJson("/-/all", { method: "PATCH", signal: ui.fetchAllAbortController.signal }, message => {
+			if (message.status === "progress") {
+				const index = Number(message.index) || 0,
+					total = Number(message.total) || 0,
+					label = `Zone ${index}/${total}: ${zoneDisplay(String(message.zone || ""))}`;
+
+				lastIndex = index;
+				lastTotal = total;
+
+				setFetchAllSummary(label);
+				setFetchAllLog(label);
+				setFetchAllProgress(index, total);
+
+				return;
+			}
+
+			if (message.status === "done") {
+				const finalTotal = lastTotal || lastIndex || 1;
+
+				setFetchAllProgress(finalTotal, finalTotal);
+
+				return;
+			}
+
+			if (message.status === "failed") {
+				throw new Error(message.error || "Fetch-all sync failed.");
+			}
+
+			setFetchAllLog(JSON.stringify(message));
+		});
+
+		if (state.activeZone) {
+			await loadZone(state.activeZone);
+		}
+
+		setFetchAllResult("ok", "All zones synchronized.", "Completed successfully.");
+		setStatus("All zones synchronized.", false);
+	} catch (err) {
+		if (err?.name === "AbortError") {
+			setFetchAllResult("error", "Fetch-all canceled.", "Request canceled by user.");
+			setStatus("Fetch-all canceled.", false);
+		} else {
+			setFetchAllResult("error", "Fetch-all failed.", err.message || "Sync failed.");
+			setStatus(err.message || "Sync failed.", true);
+		}
+	} finally {
+		ui.fetchAllAbortController = null;
+		state.fetchingAllRecords = false;
+
+		renderHeader();
+		renderZones();
 		renderRecords();
 	}
 }
@@ -1206,6 +1502,15 @@ function createHeader() {
 	controls.append(theme);
 
 	if (state.authenticated) {
+		const fetchAll = make("button", "ghost");
+
+		fetchAll.type = "button";
+		fetchAll.textContent = state.fetchingAllRecords ? "Fetching all..." : "Fetch all";
+		fetchAll.disabled = state.fetchingAllRecords;
+		fetchAll.addEventListener("click", onFetchAllClick);
+
+		controls.append(fetchAll);
+
 		const logout = make("button", "ghost", "danger");
 
 		logout.type = "button";
@@ -1266,7 +1571,7 @@ function createZones() {
 
 	refresh.type = "button";
 	refresh.textContent = state.reloadingZones ? "Reloading..." : "Reload";
-	refresh.disabled = state.reloadingZones;
+	refresh.disabled = state.reloadingZones || isUiLocked();
 	refresh.addEventListener("click", onReloadInfoClick);
 
 	top.append(title, refresh);
@@ -1277,7 +1582,7 @@ function createZones() {
 		const button = make("button", "zone-item", zoneId === state.activeZone ? "active" : "");
 
 		button.type = "button";
-		button.disabled = state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId);
+		button.disabled = state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId) || isUiLocked();
 		button.dataset.zoneId = zoneId;
 		button.textContent = zoneDisplay(zoneName);
 		button.title = `${zoneDisplay(zoneName)} (${zoneId})`;
@@ -1462,7 +1767,7 @@ function createRecords() {
 		head = make("thead"),
 		body = make("tbody");
 
-	const recordsBusy = state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId);
+	const recordsBusy = state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId) || isUiLocked();
 
 	title.textContent = state.activeZone ? `${zoneDisplay(activeZoneName())} records` : "Records";
 
@@ -1705,6 +2010,10 @@ async function onLoginSubmit(event) {
 }
 
 function onThemeToggleClick() {
+	if (isUiLocked()) {
+		return;
+	}
+
 	state.theme = state.theme === "dark" ? "light" : "dark";
 
 	applyTheme();
@@ -1721,9 +2030,16 @@ function onLogoutClick() {
 	state.savingRecord = false;
 	state.deletingRecordId = "";
 	state.reloadingZones = false;
+	state.fetchingAllRecords = false;
 
 	sessionStorage.removeItem("plat-token");
 	clearNotifications();
+
+	if (ui.fetchAllAbortController) {
+		ui.fetchAllAbortController.abort();
+	}
+
+	closeFetchAllOverlay();
 
 	setZoneHash("");
 
@@ -1731,6 +2047,10 @@ function onLogoutClick() {
 }
 
 async function onReloadInfoClick() {
+	if (isUiLocked()) {
+		return;
+	}
+
 	if (state.reloadingZones) {
 		return;
 	}
@@ -1753,11 +2073,15 @@ async function onReloadInfoClick() {
 }
 
 async function onZoneClick(zone) {
+	if (isUiLocked()) {
+		return;
+	}
+
 	await loadZone(zone);
 }
 
 async function onHashChange() {
-	if (!state.authenticated) {
+	if (!state.authenticated || isUiLocked()) {
 		return;
 	}
 
@@ -1770,18 +2094,34 @@ async function onHashChange() {
 }
 
 async function onSyncClick() {
+	if (isUiLocked()) {
+		return;
+	}
+
 	await refreshZoneFromCloudflare();
 }
 
 function onNewRecordClick() {
+	if (isUiLocked()) {
+		return;
+	}
+
 	openRecordModal();
 }
 
 function onEditRecordClick(record) {
+	if (isUiLocked()) {
+		return;
+	}
+
 	openRecordModal(record);
 }
 
 async function onDeleteRecordClick(record) {
+	if (isUiLocked()) {
+		return;
+	}
+
 	if (state.deletingRecordId) {
 		return;
 	}
@@ -1802,6 +2142,14 @@ async function onDeleteRecordClick(record) {
 	} catch (err) {
 		setStatus(err.message, true);
 	}
+}
+
+async function onFetchAllClick() {
+	if (isUiLocked()) {
+		return;
+	}
+
+	await fetchAllZonesFromCloudflare();
 }
 
 async function init() {

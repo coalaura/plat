@@ -37,6 +37,14 @@ func (z *Zone) RecordsList() []Record {
 	return records
 }
 
+func (z *Zone) ZoneData() zoneData {
+	return zoneData{
+		ID:      z.ID,
+		Name:    z.Name,
+		Records: z.RecordsList(),
+	}
+}
+
 func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 	var data zoneData
 
@@ -57,9 +65,5 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 }
 
 func (z *Zone) MarshalYAML() (any, error) {
-	return zoneData{
-		ID:      z.ID,
-		Name:    z.Name,
-		Records: z.RecordsList(),
-	}, nil
+	return z.ZoneData(), nil
 }

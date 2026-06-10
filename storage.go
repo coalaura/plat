@@ -249,13 +249,10 @@ func (s *Storage) Store() error {
 		zone := s.zones[name]
 
 		zone.mx.RLock()
-		list := zone.RecordsList()
+		data := zone.ZoneData()
 		zone.mx.RUnlock()
 
-		snap[name] = zoneData{
-			Name:    zone.Name,
-			Records: list,
-		}
+		snap[name] = data
 
 		buf.Reset()
 		buf.Grow(len(name) + 4)
@@ -271,7 +268,7 @@ func (s *Storage) Store() error {
 			yaml.FootComment(),
 		}
 
-		for i, rec := range list {
+		for i, rec := range data.Records {
 			buf.Reset()
 			buf.Grow(len(zonePath) + 24)
 
