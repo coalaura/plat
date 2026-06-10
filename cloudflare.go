@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/dns"
@@ -52,7 +53,7 @@ func (c *CloudflareClient) ListZones(ctx context.Context) ([]*Zone, error) {
 	return list, nil
 }
 
-func (c *CloudflareClient) GetRecords(ctx context.Context, zoneId string) ([]*Record, error) {
+func (c *CloudflareClient) GetRecords(ctx context.Context, zoneId, zoneName string) ([]*Record, error) {
 	var list []*Record
 
 	results, err := c.client.DNS.Records.List(ctx, dns.RecordListParams{
@@ -76,10 +77,18 @@ func (c *CloudflareClient) GetRecords(ctx context.Context, zoneId string) ([]*Re
 				return nil, err
 			}
 
+			name := result.Name
+
+			if name == zoneName {
+				name = "@"
+			} else if strings.HasSuffix(name, "."+zoneName) {
+				name = name[:len(name)-(len(zoneName)+1)]
+			}
+
 			list = append(list, &Record{
 				ID:    result.ID,
 				Type:  string(result.Type),
-				Name:  result.Name,
+				Name:  name,
 				Value: value,
 				TTL:   int64(result.TTL),
 			})

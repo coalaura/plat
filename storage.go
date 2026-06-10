@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"sort"
 	"sync"
 
 	"github.com/coalaura/etch"
@@ -21,15 +20,14 @@ type Storage struct {
 
 	client *CloudflareClient
 
-	zoneNames []string
-	zoneMap   map[string]*Zone
+	zones map[string]*Zone
 }
 
 func LoadStorage(config *Config) (*Storage, error) {
 	storage := Storage{
 		client: NewCloudflareClient(config.Cloudflare.Token),
 
-		zoneMap: make(map[string]*Zone),
+		zones: make(map[string]*Zone),
 	}
 
 	file, err := OpenFileForReading("records.yml")
@@ -43,7 +41,7 @@ func LoadStorage(config *Config) (*Storage, error) {
 
 	defer file.Close()
 
-	err = yaml.NewDecoder(file).Decode(&storage.zoneMap)
+	err = yaml.NewDecoder(file).Decode(&storage.zones)
 	if err != nil {
 		return nil, err
 	}
@@ -55,9 +53,9 @@ func (s *Storage) GetZones() map[string]string {
 	s.mx.RLock()
 	defer s.mx.RUnlock()
 
-	zones := make(map[string]string, len(s.zoneMap))
+	zones := make(map[string]string, len(s.zones))
 
-	for id, zone := range s.zoneMap {
+	for id, zone := range s.zones {
 		zones[id] = zone.Name
 	}
 
@@ -67,7 +65,7 @@ func (s *Storage) GetZones() map[string]string {
 func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
 	s.mx.RLock()
 
-	zone, exists := s.zoneMap[zoneName]
+	zone, exists := s.zones[zoneName]
 	if !exists {
 		s.mx.RUnlock()
 
@@ -85,7 +83,7 @@ func (s *Storage) GetRecords(zoneName string) ([]Record, error) {
 func (s *Storage) GetRecord(zoneName string, id string) (*Record, error) {
 	s.mx.RLock()
 
-	zone, exists := s.zoneMap[zoneName]
+	zone, exists := s.zones[zoneName]
 	if !exists {
 		s.mx.RUnlock()
 
@@ -108,7 +106,7 @@ func (s *Storage) GetRecord(zoneName string, id string) (*Record, error) {
 func (s *Storage) SetRecord(zoneName string, record *Record, override bool) error {
 	s.mx.RLock()
 
-	zone, exists := s.zoneMap[zoneName]
+	zone, exists := s.zones[zoneName]
 	if !exists {
 		s.mx.RUnlock()
 
@@ -134,7 +132,7 @@ func (s *Storage) SetRecord(zoneName string, record *Record, override bool) erro
 func (s *Storage) UnsetRecord(zoneName string, id string) error {
 	s.mx.RLock()
 
-	zone, exists := s.zoneMap[zoneName]
+	zone, exists := s.zones[zoneName]
 	if !exists {
 		s.mx.RUnlock()
 
@@ -164,46 +162,42 @@ func (s *Storage) FetchZones() error {
 	s.mx.Lock()
 	defer s.mx.Unlock()
 
-	for name, zone := range s.zoneMap {
+	for name, zone := range s.zones {
 		zone.mx.RLock()
 		empty := len(zone.Records) == 0
 		zone.mx.RUnlock()
 
 		if empty {
-			delete(s.zoneMap, name)
+			delete(s.zones, name)
 		}
 	}
 
-	s.zoneNames = make([]string, 0, len(zones))
-
 	for _, zone := range zones {
-		s.zoneNames = append(s.zoneNames, zone.Name)
-
-		s.zoneMap[zone.ID] = zone
+		s.zones[zone.ID] = zone
 	}
-
-	sort.Strings(s.zoneNames)
 
 	return nil
 }
 
-func (s *Storage) FetchRecords(zoneName string, override bool) error {
-	records, err := s.client.GetRecords(context.Background(), zoneName)
-	if err != nil {
-		return err
-	}
-
+func (s *Storage) FetchRecords(zoneId string, override bool) error {
 	s.mx.RLock()
 
-	zone, exists := s.zoneMap[zoneName]
+	zone, exists := s.zones[zoneId]
 	if !exists {
 		s.mx.RUnlock()
 
-		return fmt.Errorf("unknown zone %q", zoneName)
+		return fmt.Errorf("unknown zone %q", zoneId)
 	}
 
 	zone.mx.Lock()
 	s.mx.RUnlock()
+
+	records, err := s.client.GetRecords(context.Background(), zone.ID, zone.Name)
+	if err != nil {
+		zone.mx.Unlock()
+
+		return err
+	}
 
 	for _, record := range records {
 		if !override {
@@ -234,15 +228,15 @@ func (s *Storage) Store() error {
 
 	s.mx.RLock()
 
-	snap := make(map[string]zoneData, len(s.zoneMap))
-	comments := make(yaml.CommentMap, len(s.zoneMap))
+	snap := make(map[string]zoneData, len(s.zones))
+	comments := make(yaml.CommentMap, len(s.zones))
 
-	names := slices.Sorted(maps.Keys(s.zoneMap))
+	names := slices.Sorted(maps.Keys(s.zones))
 
 	var buf tape.Buffer
 
 	for _, name := range names {
-		zone := s.zoneMap[name]
+		zone := s.zones[name]
 
 		zone.mx.RLock()
 		list := zone.RecordsList()

@@ -2,14 +2,7 @@ import "../css/plat.css";
 
 const app = document.getElementById("app");
 
-const TOKEN_KEY = "plat-token";
-const THEME_KEY = "plat-theme";
-const ROOT_LABEL = "@";
-const DEFAULT_THEME = "dark";
-const EMPTY = "--";
-const HASH_PREFIX = "#";
-
-const RECORD_TYPES = [
+const RecordTypes = [
 	"A",
 	"AAAA",
 	"CAA",
@@ -33,9 +26,9 @@ const RECORD_TYPES = [
 	"URI",
 ];
 
-let state = {
-	token: sessionStorage.getItem(TOKEN_KEY) || "",
-	theme: localStorage.getItem(THEME_KEY) || DEFAULT_THEME,
+const state = {
+	token: sessionStorage.getItem("plat-token") || "",
+	theme: localStorage.getItem("plat-theme") || "dark",
 	authenticated: false,
 	zones: {},
 	activeZone: "",
@@ -58,10 +51,12 @@ function make(tag, ...classes) {
 }
 
 function randomId() {
-	if (window.crypto && window.crypto.getRandomValues) {
+	if (window.crypto?.getRandomValues) {
 		const values = new Uint32Array(4);
+
 		window.crypto.getRandomValues(values);
-		return Array.from(values, (value) => value.toString(16).padStart(8, "0")).join("");
+
+		return Array.from(values, value => value.toString(16).padStart(8, "0")).join("");
 	}
 
 	return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
@@ -72,36 +67,41 @@ function quote(value) {
 }
 
 function splitTokens(value) {
-	const text = String(value || "");
-	const fields = [];
-	let current = "";
-	let inQuotes = false;
-	let escaped = false;
+	const text = String(value || ""),
+		fields = [];
 
-	for (let index = 0; index < text.length; index += 1) {
-		const char = text[index];
+	let current = "",
+		inQuotes = false,
+		escaped = false;
 
+	for (const char of text) {
 		if (escaped) {
 			current += char;
+
 			escaped = false;
+
 			continue;
 		}
 
 		if (char === "\\") {
 			escaped = true;
+
 			continue;
 		}
 
 		if (char === '"') {
 			inQuotes = !inQuotes;
+
 			continue;
 		}
 
 		if (/\s/.test(char) && !inQuotes) {
 			if (current) {
 				fields.push(current);
+
 				current = "";
 			}
+
 			continue;
 		}
 
@@ -116,8 +116,8 @@ function splitTokens(value) {
 }
 
 function parseByParts(value, keys) {
-	const parts = splitTokens(value);
-	const result = {};
+	const parts = splitTokens(value),
+		result = {};
 
 	for (let index = 0; index < keys.length; index += 1) {
 		result[keys[index]] = parts[index] || "";
@@ -127,21 +127,21 @@ function parseByParts(value, keys) {
 }
 
 function parseWithRemainder(value, headKeys, tailKey) {
-	const tokens = splitTokens(value);
-	const result = {};
+	const tokens = splitTokens(value),
+		result = {};
 
 	for (let index = 0; index < headKeys.length; index += 1) {
 		result[headKeys[index]] = tokens[index] || "";
 	}
 
-	const rest = tokens.slice(headKeys.length).join(" ");
-	result[tailKey] = rest;
+	result[tailKey] = tokens.slice(headKeys.length).join(" ");
 
 	return result;
 }
 
 function parseLoc(value) {
 	const parts = splitTokens(value);
+
 	return {
 		lat: parts.slice(0, 4).join(" "),
 		lng: parts.slice(4, 8).join(" "),
@@ -153,11 +153,12 @@ function parseLoc(value) {
 }
 
 function parseRecordValue(type, value) {
-	const text = String(value || "").trim();
-	const config = recordTypeConfig(type);
+	const text = String(value || "").trim(),
+		config = recordTypeConfig(type);
 
 	try {
 		const parsed = config.parse(text);
+
 		if (parsed && typeof parsed === "object") {
 			return parsed;
 		}
@@ -173,38 +174,49 @@ function recordTypeConfig(type) {
 		A: {
 			description: "IPv4 address.",
 			fields: [{ key: "address", label: "IPv4", placeholder: "203.0.113.5", required: true, hint: "A single IPv4 address." }],
-			build: (data) => data.address,
-			parse: (value) => ({ address: value }),
+			build: data => data.address,
+			parse: value => ({ address: value }),
 		},
 		AAAA: {
 			description: "IPv6 address.",
 			fields: [{ key: "address", label: "IPv6", placeholder: "2001:db8::5", required: true, hint: "A single IPv6 address." }],
-			build: (data) => data.address,
-			parse: (value) => ({ address: value }),
+			build: data => data.address,
+			parse: value => ({ address: value }),
 		},
 		CNAME: {
 			description: "Alias to another hostname.",
 			fields: [{ key: "target", label: "Target", placeholder: "service.example.net.", required: true, hint: "Canonical target hostname.", wide: true }],
-			build: (data) => data.target,
-			parse: (value) => ({ target: value }),
+			build: data => data.target,
+			parse: value => ({ target: value }),
 		},
 		NS: {
 			description: "Delegated authoritative nameserver.",
 			fields: [{ key: "host", label: "Nameserver", placeholder: "ns1.example.net.", required: true, hint: "Nameserver hostname." }],
-			build: (data) => data.host,
-			parse: (value) => ({ host: value }),
+			build: data => data.host,
+			parse: value => ({ host: value }),
 		},
 		PTR: {
 			description: "Reverse DNS pointer target.",
 			fields: [{ key: "target", label: "Target", placeholder: "host.example.com.", required: true, hint: "Hostname returned by reverse lookup." }],
-			build: (data) => data.target,
-			parse: (value) => ({ target: value }),
+			build: data => data.target,
+			parse: value => ({ target: value }),
 		},
 		TXT: {
 			description: "Arbitrary text payload.",
-			fields: [{ key: "text", label: "Text", placeholder: "v=spf1 include:_spf.example.com ~all", required: true, hint: "Use raw text value.", multiline: true, wide: true, rows: 4 }],
-			build: (data) => data.text,
-			parse: (value) => ({ text: splitTokens(value).join(" ") }),
+			fields: [
+				{
+					key: "text",
+					label: "Text",
+					placeholder: "v=spf1 include:_spf.example.com ~all",
+					required: true,
+					hint: "Use raw text value.",
+					multiline: true,
+					wide: true,
+					rows: 4,
+				},
+			],
+			build: data => data.text,
+			parse: value => ({ text: splitTokens(value).join(" ") }),
 		},
 		MX: {
 			description: "Mail exchanger with priority.",
@@ -212,8 +224,8 @@ function recordTypeConfig(type) {
 				{ key: "priority", label: "Priority", placeholder: "10", required: true, hint: "Lower values are preferred." },
 				{ key: "exchange", label: "Exchange", placeholder: "mail.example.com.", required: true, hint: "Mail server hostname." },
 			],
-			build: (data) => `${data.priority} ${data.exchange}`,
-			parse: (value) => parseByParts(value, ["priority", "exchange"]),
+			build: data => `${data.priority} ${data.exchange}`,
+			parse: value => parseByParts(value, ["priority", "exchange"]),
 		},
 		CAA: {
 			description: "Certificate Authority Authorization policy.",
@@ -222,8 +234,8 @@ function recordTypeConfig(type) {
 				{ key: "tag", label: "Tag", placeholder: "issue", required: true, hint: "issue, issuewild, or iodef." },
 				{ key: "value", label: "Value", placeholder: "letsencrypt.org", required: true, hint: "CA domain or reporting URL." },
 			],
-			build: (data) => `${data.flags} ${data.tag} ${quote(data.value)}`,
-			parse: (value) => parseWithRemainder(value, ["flags", "tag"], "value"),
+			build: data => `${data.flags} ${data.tag} ${quote(data.value)}`,
+			parse: value => parseWithRemainder(value, ["flags", "tag"], "value"),
 		},
 		SRV: {
 			description: "Service location details.",
@@ -233,8 +245,8 @@ function recordTypeConfig(type) {
 				{ key: "port", label: "Port", placeholder: "443", required: true, hint: "Destination service port." },
 				{ key: "target", label: "Target", placeholder: "service.example.com.", required: true, hint: "Destination hostname." },
 			],
-			build: (data) => `${data.priority} ${data.weight} ${data.port} ${data.target}`,
-			parse: (value) => parseByParts(value, ["priority", "weight", "port", "target"]),
+			build: data => `${data.priority} ${data.weight} ${data.port} ${data.target}`,
+			parse: value => parseByParts(value, ["priority", "weight", "port", "target"]),
 		},
 		URI: {
 			description: "Service URI with priority and weight.",
@@ -243,8 +255,8 @@ function recordTypeConfig(type) {
 				{ key: "weight", label: "Weight", placeholder: "1", required: true, hint: "Relative balancing weight." },
 				{ key: "target", label: "Target URI", placeholder: "https://example.com/api", required: true, hint: "Quoted URI target." },
 			],
-			build: (data) => `${data.priority} ${data.weight} ${quote(data.target)}`,
-			parse: (value) => parseWithRemainder(value, ["priority", "weight"], "target"),
+			build: data => `${data.priority} ${data.weight} ${quote(data.target)}`,
+			parse: value => parseWithRemainder(value, ["priority", "weight"], "target"),
 		},
 		TLSA: {
 			description: "TLS certificate association data.",
@@ -254,8 +266,8 @@ function recordTypeConfig(type) {
 				{ key: "matching", label: "Matching Type", placeholder: "1", required: true, hint: "0 full, 1 SHA-256, 2 SHA-512." },
 				{ key: "data", label: "Certificate Data", placeholder: "aabbcc...", required: true, hint: "Hex encoded association data." },
 			],
-			build: (data) => `${data.usage} ${data.selector} ${data.matching} ${data.data}`,
-			parse: (value) => parseByParts(value, ["usage", "selector", "matching", "data"]),
+			build: data => `${data.usage} ${data.selector} ${data.matching} ${data.data}`,
+			parse: value => parseByParts(value, ["usage", "selector", "matching", "data"]),
 		},
 		SSHFP: {
 			description: "SSH fingerprint metadata.",
@@ -264,8 +276,8 @@ function recordTypeConfig(type) {
 				{ key: "fpType", label: "Fingerprint Type", placeholder: "2", required: true, hint: "1 SHA-1 or 2 SHA-256." },
 				{ key: "fingerprint", label: "Fingerprint", placeholder: "ab12...", required: true, hint: "Hex encoded fingerprint." },
 			],
-			build: (data) => `${data.algorithm} ${data.fpType} ${data.fingerprint}`,
-			parse: (value) => parseByParts(value, ["algorithm", "fpType", "fingerprint"]),
+			build: data => `${data.algorithm} ${data.fpType} ${data.fingerprint}`,
+			parse: value => parseByParts(value, ["algorithm", "fpType", "fingerprint"]),
 		},
 		DNSKEY: {
 			description: "DNSSEC public key material.",
@@ -275,8 +287,8 @@ function recordTypeConfig(type) {
 				{ key: "algorithm", label: "Algorithm", placeholder: "13", required: true, hint: "DNSSEC signing algorithm." },
 				{ key: "publicKey", label: "Public Key", placeholder: "AwEAA...", required: true, hint: "Base64 public key data." },
 			],
-			build: (data) => `${data.flags} ${data.protocol} ${data.algorithm} ${data.publicKey}`,
-			parse: (value) => parseByParts(value, ["flags", "protocol", "algorithm", "publicKey"]),
+			build: data => `${data.flags} ${data.protocol} ${data.algorithm} ${data.publicKey}`,
+			parse: value => parseByParts(value, ["flags", "protocol", "algorithm", "publicKey"]),
 		},
 		DS: {
 			description: "Delegation Signer digest.",
@@ -286,8 +298,8 @@ function recordTypeConfig(type) {
 				{ key: "digestType", label: "Digest Type", placeholder: "2", required: true, hint: "1 SHA-1, 2 SHA-256, 4 SHA-384." },
 				{ key: "digest", label: "Digest", placeholder: "ab12...", required: true, hint: "Hex digest string." },
 			],
-			build: (data) => `${data.keyTag} ${data.algorithm} ${data.digestType} ${data.digest}`,
-			parse: (value) => parseByParts(value, ["keyTag", "algorithm", "digestType", "digest"]),
+			build: data => `${data.keyTag} ${data.algorithm} ${data.digestType} ${data.digest}`,
+			parse: value => parseByParts(value, ["keyTag", "algorithm", "digestType", "digest"]),
 		},
 		NAPTR: {
 			description: "Regex-based rewrite rules.",
@@ -299,8 +311,8 @@ function recordTypeConfig(type) {
 				{ key: "regexp", label: "Regexp", placeholder: "", required: false, hint: "Optional regex rewrite." },
 				{ key: "replacement", label: "Replacement", placeholder: "_sip._udp.example.com.", required: true, hint: "Target replacement domain." },
 			],
-			build: (data) => `${data.order} ${data.preference} ${quote(data.flags)} ${quote(data.service)} ${quote(data.regexp || "")} ${data.replacement}`,
-			parse: (value) => parseByParts(value, ["order", "preference", "flags", "service", "regexp", "replacement"]),
+			build: data => `${data.order} ${data.preference} ${quote(data.flags)} ${quote(data.service)} ${quote(data.regexp || "")} ${data.replacement}`,
+			parse: value => parseByParts(value, ["order", "preference", "flags", "service", "regexp", "replacement"]),
 		},
 		CERT: {
 			description: "Certificate record payload.",
@@ -310,14 +322,16 @@ function recordTypeConfig(type) {
 				{ key: "algorithm", label: "Algorithm", placeholder: "0", required: true, hint: "Algorithm identifier." },
 				{ key: "certificate", label: "Certificate", placeholder: "MIIB...", required: true, hint: "Base64 certificate data." },
 			],
-			build: (data) => `${data.certType} ${data.keyTag} ${data.algorithm} ${data.certificate}`,
-			parse: (value) => parseByParts(value, ["certType", "keyTag", "algorithm", "certificate"]),
+			build: data => `${data.certType} ${data.keyTag} ${data.algorithm} ${data.certificate}`,
+			parse: value => parseByParts(value, ["certType", "keyTag", "algorithm", "certificate"]),
 		},
 		OPENPGPKEY: {
 			description: "OpenPGP public key packet.",
-			fields: [{ key: "packet", label: "Public Key Packet", placeholder: "mQENBF...", required: true, hint: "Base64 encoded packet body.", multiline: true, wide: true, rows: 5 }],
-			build: (data) => data.packet,
-			parse: (value) => ({ packet: value }),
+			fields: [
+				{ key: "packet", label: "Public Key Packet", placeholder: "mQENBF...", required: true, hint: "Base64 encoded packet body.", multiline: true, wide: true, rows: 5 },
+			],
+			build: data => data.packet,
+			parse: value => ({ packet: value }),
 		},
 		SMIMEA: {
 			description: "S/MIME certificate association.",
@@ -327,8 +341,8 @@ function recordTypeConfig(type) {
 				{ key: "matching", label: "Matching Type", placeholder: "1", required: true, hint: "Digest or full match selector." },
 				{ key: "data", label: "Certificate Data", placeholder: "aabb...", required: true, hint: "Hex association data." },
 			],
-			build: (data) => `${data.usage} ${data.selector} ${data.matching} ${data.data}`,
-			parse: (value) => parseByParts(value, ["usage", "selector", "matching", "data"]),
+			build: data => `${data.usage} ${data.selector} ${data.matching} ${data.data}`,
+			parse: value => parseByParts(value, ["usage", "selector", "matching", "data"]),
 		},
 		LOC: {
 			description: "Geographic location.",
@@ -340,37 +354,39 @@ function recordTypeConfig(type) {
 				{ key: "hPrec", label: "Horiz Precision", placeholder: "10000m", required: false, hint: "Optional horizontal precision." },
 				{ key: "vPrec", label: "Vert Precision", placeholder: "10m", required: false, hint: "Optional vertical precision." },
 			],
-			build: (data) => [data.lat, data.lng, data.alt, data.size, data.hPrec, data.vPrec].filter(Boolean).join(" "),
-			parse: (value) => parseLoc(value),
+			build: data => [data.lat, data.lng, data.alt, data.size, data.hPrec, data.vPrec].filter(Boolean).join(" "),
+			parse: value => parseLoc(value),
 		},
 		HTTPS: {
 			description: "HTTPS service binding (SVCB alias mode or service mode).",
 			fields: [
 				{ key: "priority", label: "Priority", placeholder: "1", required: true, hint: "0 for alias mode." },
 				{ key: "target", label: "Target", placeholder: ".", required: true, hint: "Target name, usually . or a hostname." },
-				{ key: "params", label: "Svc Params", placeholder: "alpn=\"h3,h2\" ipv4hint=203.0.113.5", required: false, hint: "Space-separated key=value parameters." },
+				{ key: "params", label: "Svc Params", placeholder: 'alpn="h3,h2" ipv4hint=203.0.113.5', required: false, hint: "Space-separated key=value parameters." },
 			],
-			build: (data) => [data.priority, data.target, data.params].filter(Boolean).join(" "),
-			parse: (value) => parseWithRemainder(value, ["priority", "target"], "params"),
+			build: data => [data.priority, data.target, data.params].filter(Boolean).join(" "),
+			parse: value => parseWithRemainder(value, ["priority", "target"], "params"),
 		},
 		SVCB: {
 			description: "Generic service binding record.",
 			fields: [
 				{ key: "priority", label: "Priority", placeholder: "1", required: true, hint: "0 for alias mode." },
 				{ key: "target", label: "Target", placeholder: "svc.example.com.", required: true, hint: "Service target name." },
-				{ key: "params", label: "Svc Params", placeholder: "alpn=\"h2\" port=443", required: false, hint: "Space-separated key=value parameters." },
+				{ key: "params", label: "Svc Params", placeholder: 'alpn="h2" port=443', required: false, hint: "Space-separated key=value parameters." },
 			],
-			build: (data) => [data.priority, data.target, data.params].filter(Boolean).join(" "),
-			parse: (value) => parseWithRemainder(value, ["priority", "target"], "params"),
+			build: data => [data.priority, data.target, data.params].filter(Boolean).join(" "),
+			parse: value => parseWithRemainder(value, ["priority", "target"], "params"),
 		},
 	};
 
-	return map[type] || {
-		description: "Raw record value.",
-		fields: [{ key: "value", label: "Value", placeholder: "", required: true, hint: "Raw record value.", multiline: true, wide: true, rows: 4 }],
-		build: (data) => data.value,
-		parse: (value) => ({ value }),
-	};
+	return (
+		map[type] || {
+			description: "Raw record value.",
+			fields: [{ key: "value", label: "Value", placeholder: "", required: true, hint: "Raw record value.", multiline: true, wide: true, rows: 4 }],
+			build: data => data.value,
+			parse: value => ({ value: value }),
+		}
+	);
 }
 
 function zoneDisplay(zone) {
@@ -380,6 +396,7 @@ function zoneDisplay(zone) {
 function zoneEntries() {
 	return Object.entries(state.zones).sort((a, b) => {
 		const nameSort = zoneDisplay(a[1]).localeCompare(zoneDisplay(b[1]));
+
 		if (nameSort !== 0) {
 			return nameSort;
 		}
@@ -393,7 +410,8 @@ function activeZoneName() {
 }
 
 function zoneFromHash() {
-	const raw = window.location.hash.startsWith(HASH_PREFIX) ? window.location.hash.slice(1) : "";
+	const raw = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
+
 	if (!raw) {
 		return "";
 	}
@@ -410,10 +428,12 @@ function setZoneHash(zone) {
 		if (window.location.hash) {
 			history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
 		}
+
 		return;
 	}
 
-	const nextHash = `${HASH_PREFIX}${encodeURIComponent(zone)}`;
+	const nextHash = `${"#"}${encodeURIComponent(zone)}`;
+
 	if (window.location.hash !== nextHash) {
 		history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
 	}
@@ -422,14 +442,18 @@ function setZoneHash(zone) {
 function setStatus(message, isError) {
 	state.message = isError ? "" : message;
 	state.error = isError ? message : "";
+
 	render();
 }
 
 function applyTheme() {
 	const theme = state.theme === "light" ? "light" : "dark";
+
 	document.documentElement.setAttribute("data-theme", theme);
+
 	state.theme = theme;
-	localStorage.setItem(THEME_KEY, theme);
+
+	localStorage.setItem("plat-theme", theme);
 }
 
 async function api(path, options = {}) {
@@ -445,10 +469,11 @@ async function api(path, options = {}) {
 
 	const response = await fetch(path, {
 		...options,
-		headers,
+		headers: headers,
 	});
 
 	const text = await response.text();
+
 	let payload = null;
 
 	if (text) {
@@ -470,22 +495,27 @@ async function checkInfo() {
 	const info = await api("/-/info");
 
 	state.authenticated = Boolean(info?.authenticated);
+
 	const zones = info?.zones;
+
 	state.zones = zones && typeof zones === "object" && !Array.isArray(zones) ? zones : {};
 
 	if (!state.authenticated) {
 		state.activeZone = "";
 		state.records = [];
+
 		return;
 	}
 
 	if (!Object.keys(state.zones).length) {
 		state.activeZone = "";
 		state.records = [];
+
 		return;
 	}
 
 	const hashZone = zoneFromHash();
+
 	if (hashZone && state.zones[hashZone]) {
 		state.activeZone = hashZone;
 	} else if (!state.activeZone || !state.zones[state.activeZone]) {
@@ -498,17 +528,22 @@ async function checkInfo() {
 async function loadZone(zone) {
 	if (!zone) {
 		state.records = [];
+
 		return;
 	}
 
 	state.loading = true;
+
 	render();
 
 	try {
 		const records = await api(`/-/${encodeURIComponent(zone)}`);
+
 		state.records = Array.isArray(records) ? records : [];
 		state.activeZone = zone;
+
 		setZoneHash(zone);
+
 		state.message = "";
 		state.error = "";
 	} catch (err) {
@@ -516,6 +551,7 @@ async function loadZone(zone) {
 		state.error = err.message;
 	} finally {
 		state.loading = false;
+
 		render();
 	}
 }
@@ -526,6 +562,7 @@ async function refreshZoneFromCloudflare() {
 	}
 
 	state.loading = true;
+
 	render();
 
 	try {
@@ -534,11 +571,13 @@ async function refreshZoneFromCloudflare() {
 		});
 
 		state.records = Array.isArray(records) ? records : [];
+
 		setStatus("Zone refreshed from Cloudflare.", false);
 	} catch (err) {
 		setStatus(err.message, true);
 	} finally {
 		state.loading = false;
+
 		render();
 	}
 }
@@ -550,6 +589,7 @@ async function saveRecord(record, isUpdate) {
 	});
 
 	setStatus(isUpdate ? "Record updated." : "Record created.", false);
+
 	await loadZone(state.activeZone);
 }
 
@@ -559,14 +599,15 @@ async function deleteRecord(record) {
 	});
 
 	setStatus(`Deleted ${record.name} (${record.type}).`, false);
+
 	await loadZone(state.activeZone);
 }
 
 function parseFormRecord(formData, currentRecord) {
-	const mode = String(formData.get("mode") || "typed");
-	const type = String(formData.get("type") || "A").toUpperCase();
-	const name = String(formData.get("name") || "").trim();
-	const ttl = Number.parseInt(String(formData.get("ttl") || "1"), 10);
+	const mode = String(formData.get("mode") || "typed"),
+		type = String(formData.get("type") || "A").toUpperCase(),
+		name = String(formData.get("name") || "").trim(),
+		ttl = Number.parseInt(String(formData.get("ttl") || "1"), 10);
 
 	if (!name) {
 		throw new Error("Record name is required.");
@@ -581,15 +622,17 @@ function parseFormRecord(formData, currentRecord) {
 	if (mode === "raw") {
 		value = String(formData.get("rawValue") || "").trim();
 	} else {
-		const config = recordTypeConfig(type);
-		const fieldData = {};
+		const config = recordTypeConfig(type),
+			fieldData = {};
 
 		for (const field of config.fields) {
-			const key = `field_${field.key}`;
-			const current = String(formData.get(key) || "").trim();
+			const key = `field_${field.key}`,
+				current = String(formData.get(key) || "").trim();
+
 			if (field.required && !current) {
 				throw new Error(`${field.label} is required for ${type}.`);
 			}
+
 			fieldData[field.key] = current;
 		}
 
@@ -602,27 +645,28 @@ function parseFormRecord(formData, currentRecord) {
 
 	return {
 		id: currentRecord?.id || randomId(),
-		type,
-		name,
-		value,
-		ttl,
+		type: type,
+		name: name,
+		value: value,
+		ttl: ttl,
 	};
 }
 
 function makeField(field, current) {
-	const wrap = make("label", "field", field.wide ? "field-wide" : "");
-	const title = make("span", "field-title");
-	const hint = make("span", "field-hint");
-	const input = make(field.multiline ? "textarea" : "input", "input", field.multiline ? "textarea" : "");
+	const wrap = make("label", "field", field.wide ? "field-wide" : ""),
+		title = make("span", "field-title"),
+		hint = make("span", "field-hint"),
+		input = make(field.multiline ? "textarea" : "input", "input", field.multiline ? "textarea" : "");
 
 	title.textContent = field.label;
 	hint.textContent = field.hint || "";
 
-	if (!field.multiline) {
-		input.type = "text";
-	} else {
+	if (field.multiline) {
 		input.rows = field.rows || 3;
+	} else {
+		input.type = "text";
 	}
+
 	input.name = `field_${field.key}`;
 	input.placeholder = field.placeholder || "";
 	input.value = current?.[field.key] || "";
@@ -633,118 +677,153 @@ function makeField(field, current) {
 }
 
 function openRecordModal(currentRecord) {
-	const overlay = make("div", "overlay");
-	const modal = make("div", "modal");
-	const top = make("div", "modal-top");
-	const title = make("h2", "modal-title");
-	const closeButton = make("button", "ghost");
-	const form = make("form", "record-form");
-	const modeRow = make("div", "inline-row");
-	const modeLabel = make("span", "field-title");
-	const modeSelect = make("select", "input");
-	const rawWrap = make("label", "field");
-	const rawTitle = make("span", "field-title");
-	const rawHint = make("span", "field-hint");
-	const rawInput = make("textarea", "input", "textarea");
-	const dynamicSection = make("div", "dynamic-fields");
-	const footer = make("div", "modal-foot");
-	const submitButton = make("button", "button");
-	const cancelButton = make("button", "ghost");
+	const overlay = make("div", "overlay"),
+		modal = make("div", "modal"),
+		top = make("div", "modal-top"),
+		title = make("h2", "modal-title"),
+		closeButton = make("button", "ghost"),
+		form = make("form", "record-form"),
+		modeRow = make("div", "inline-row"),
+		modeLabel = make("span", "field-title"),
+		modeSelect = make("select", "input"),
+		rawWrap = make("label", "field"),
+		rawTitle = make("span", "field-title"),
+		rawHint = make("span", "field-hint"),
+		rawInput = make("textarea", "input", "textarea"),
+		dynamicSection = make("div", "dynamic-fields"),
+		footer = make("div", "modal-foot"),
+		submitButton = make("button", "button"),
+		cancelButton = make("button", "ghost");
 
 	title.textContent = currentRecord ? "Edit record" : "Create record";
+
 	closeButton.type = "button";
 	closeButton.textContent = "Close";
+
 	modeLabel.textContent = "Input mode";
 
-	const modeTyped = make("option");
-	const modeRaw = make("option");
+	const modeTyped = make("option"),
+		modeRaw = make("option");
+
 	modeTyped.value = "typed";
 	modeTyped.textContent = "Typed fields";
+
 	modeRaw.value = "raw";
 	modeRaw.textContent = "Raw value";
+
 	modeSelect.name = "mode";
 	modeSelect.append(modeTyped, modeRaw);
 	modeSelect.value = "typed";
 
 	rawTitle.textContent = "Raw value";
 	rawHint.textContent = "Direct record value string sent to backend.";
+
 	rawInput.name = "rawValue";
 	rawInput.rows = 4;
 	rawInput.value = currentRecord?.value || "";
 
-	const nameField = make("label", "field");
-	const nameTitle = make("span", "field-title");
-	const nameHint = make("span", "field-hint");
-	const nameInput = make("input", "input");
+	const nameField = make("label", "field"),
+		nameTitle = make("span", "field-title"),
+		nameHint = make("span", "field-hint"),
+		nameInput = make("input", "input");
+
 	nameTitle.textContent = "Name";
+
 	nameHint.textContent = "Use @ for zone root.";
+
 	nameInput.type = "text";
 	nameInput.name = "name";
-	nameInput.placeholder = ROOT_LABEL;
-	nameInput.value = currentRecord?.name || ROOT_LABEL;
+	nameInput.placeholder = "@";
+	nameInput.value = currentRecord?.name || "@";
+
 	nameField.append(nameTitle, nameInput, nameHint);
 
-	const typeField = make("label", "field");
-	const typeTitle = make("span", "field-title");
-	const typeHint = make("span", "field-hint");
-	const typeInput = make("select", "input");
+	const typeField = make("label", "field"),
+		typeTitle = make("span", "field-title"),
+		typeHint = make("span", "field-hint"),
+		typeInput = make("select", "input");
+
 	typeTitle.textContent = "Type";
+
 	typeHint.textContent = "All Cloudflare DNS record types are available.";
+
 	typeInput.name = "type";
-	for (const type of RECORD_TYPES) {
+
+	for (const type of RecordTypes) {
 		const option = make("option");
+
 		option.value = type;
 		option.textContent = type;
+
 		typeInput.append(option);
 	}
+
 	typeInput.value = currentRecord?.type || "A";
+
 	typeField.append(typeTitle, typeInput, typeHint);
 
-	const ttlField = make("label", "field");
-	const ttlTitle = make("span", "field-title");
-	const ttlHint = make("span", "field-hint");
-	const ttlInput = make("input", "input");
+	const ttlField = make("label", "field"),
+		ttlTitle = make("span", "field-title"),
+		ttlHint = make("span", "field-hint"),
+		ttlInput = make("input", "input");
+
 	ttlTitle.textContent = "TTL (seconds)";
+
 	ttlHint.textContent = "Stored as integer seconds. Use 1 for auto.";
+
 	ttlInput.type = "number";
 	ttlInput.min = "1";
 	ttlInput.step = "1";
 	ttlInput.name = "ttl";
 	ttlInput.value = String(currentRecord?.ttl || 1);
+
 	ttlField.append(ttlTitle, ttlInput, ttlHint);
 
 	const typedDescription = make("p", "typed-description");
 
 	submitButton.type = "submit";
 	submitButton.textContent = currentRecord ? "Save" : "Create";
+
 	cancelButton.type = "button";
 	cancelButton.textContent = "Cancel";
 
 	modeRow.append(modeLabel, modeSelect);
+
 	rawWrap.append(rawTitle, rawInput, rawHint);
+
 	footer.append(submitButton, cancelButton);
+
 	top.append(title, closeButton);
+
 	form.append(top, nameField, typeField, ttlField, modeRow, typedDescription, dynamicSection, rawWrap, footer);
+
 	modal.append(form);
+
 	overlay.append(modal);
+
 	document.body.append(overlay);
 
 	let typedCache = parseRecordValue(typeInput.value, rawInput.value);
 
 	const collectTypedFields = () => {
-		const config = recordTypeConfig(typeInput.value);
-		const values = {};
+		const config = recordTypeConfig(typeInput.value),
+			values = {};
+
 		for (const field of config.fields) {
 			const input = form.elements.namedItem(`field_${field.key}`);
+
 			values[field.key] = input ? String(input.value || "").trim() : "";
 		}
+
 		return values;
 	};
 
 	const syncRawFromTyped = () => {
-		const config = recordTypeConfig(typeInput.value);
-		const values = collectTypedFields();
+		const config = recordTypeConfig(typeInput.value),
+			values = collectTypedFields();
+
 		typedCache = values;
+
 		rawInput.value = config.build(values).trim();
 	};
 
@@ -754,7 +833,9 @@ function openRecordModal(currentRecord) {
 
 	const renderTypeFields = () => {
 		dynamicSection.replaceChildren();
+
 		const config = recordTypeConfig(typeInput.value);
+
 		typedDescription.textContent = config.description;
 
 		for (const field of config.fields) {
@@ -766,13 +847,10 @@ function openRecordModal(currentRecord) {
 		typedDescription.classList.toggle("hidden", modeSelect.value !== "typed");
 	};
 
-	const close = () => {
-		overlay.remove();
-	};
+	closeButton.addEventListener("click", () => overlay.remove());
+	cancelButton.addEventListener("click", () => overlay.remove());
 
-	closeButton.addEventListener("click", close);
-	cancelButton.addEventListener("click", close);
-	overlay.addEventListener("click", (event) => {
+	overlay.addEventListener("click", event => {
 		if (event.target === overlay) {
 			close();
 		}
@@ -784,6 +862,7 @@ function openRecordModal(currentRecord) {
 		} else {
 			syncTypedFromRaw();
 		}
+
 		renderTypeFields();
 	});
 
@@ -793,10 +872,11 @@ function openRecordModal(currentRecord) {
 		} else {
 			typedCache = collectTypedFields();
 		}
+
 		renderTypeFields();
 	});
 
-	form.addEventListener("submit", async (event) => {
+	form.addEventListener("submit", async event => {
 		event.preventDefault();
 
 		try {
@@ -807,7 +887,9 @@ function openRecordModal(currentRecord) {
 			}
 
 			const record = parseFormRecord(new FormData(form), currentRecord);
+
 			await saveRecord(record, Boolean(currentRecord));
+
 			close();
 		} catch (err) {
 			setStatus(err.message, true);
@@ -818,35 +900,41 @@ function openRecordModal(currentRecord) {
 }
 
 function createHeader() {
-	const head = make("header", "top");
-	const titleWrap = make("div", "title-wrap");
-	const title = make("h1", "title");
-	const subtitle = make("p", "subtitle");
+	const head = make("header", "top"),
+		titleWrap = make("div", "title-wrap"),
+		title = make("h1", "title"),
+		subtitle = make("p", "subtitle");
 
 	title.textContent = "plat DNS";
+
 	subtitle.textContent = "Self-hosted DNS control for Cloudflare zones.";
 
 	titleWrap.append(title, subtitle);
+
 	head.append(titleWrap);
 
-	const controls = make("div", "top-controls");
-	const theme = make("button", "ghost");
+	const controls = make("div", "top-controls"),
+		theme = make("button", "ghost");
+
 	theme.type = "button";
 	theme.textContent = state.theme === "dark" ? "Light mode" : "Dark mode";
 	theme.addEventListener("click", onThemeToggleClick);
+
 	controls.append(theme);
 
 	if (state.authenticated) {
-		const auth = make("div", "auth-chip");
-		const text = make("span", "mono");
-		const logout = make("button", "ghost");
+		const auth = make("div", "auth-chip"),
+			text = make("span", "mono"),
+			logout = make("button", "ghost");
 
 		text.textContent = "Token active";
+
 		logout.type = "button";
 		logout.textContent = "Log out";
 		logout.addEventListener("click", onLogoutClick);
 
 		auth.append(text, logout);
+
 		controls.append(auth);
 	}
 
@@ -860,6 +948,7 @@ function createStatus() {
 
 	if (!state.message && !state.error) {
 		status.classList.add("hidden");
+
 		return status;
 	}
 
@@ -870,29 +959,33 @@ function createStatus() {
 }
 
 function createLogin() {
-	const panel = make("section", "panel", "login");
-	const title = make("h2", "panel-title");
-	const description = make("p", "panel-subtitle");
-	const form = make("form", "stack");
-	const tokenLabel = make("label", "field");
-	const tokenTitle = make("span", "field-title");
-	const tokenHint = make("span", "field-hint");
-	const tokenInput = make("input", "input");
-	const action = make("button", "button");
+	const panel = make("section", "panel", "login"),
+		title = make("h2", "panel-title"),
+		description = make("p", "panel-subtitle"),
+		form = make("form", "stack"),
+		tokenLabel = make("label", "field"),
+		tokenTitle = make("span", "field-title"),
+		tokenInput = make("input", "input"),
+		action = make("button", "button");
 
 	title.textContent = "Access";
+
 	description.textContent = "Use your server token to manage zones and records.";
+
 	tokenTitle.textContent = "Token";
-	tokenHint.textContent = "Stored in session storage and sent as Bearer token.";
+
 	tokenInput.type = "password";
 	tokenInput.name = "token";
 	tokenInput.value = state.token;
 	tokenInput.placeholder = "Paste access token";
+
 	action.type = "submit";
 	action.textContent = "Connect";
 
-	tokenLabel.append(tokenTitle, tokenInput, tokenHint);
+	tokenLabel.append(tokenTitle, tokenInput);
+
 	form.append(tokenLabel, action);
+
 	panel.append(title, description, form);
 
 	form.addEventListener("submit", onLoginSubmit);
@@ -901,26 +994,30 @@ function createLogin() {
 }
 
 function createZones() {
-	const panel = make("section", "panel", "zones");
-	const top = make("div", "panel-head");
-	const title = make("h2", "panel-title");
-	const refresh = make("button", "ghost");
-	const list = make("div", "zone-list");
+	const panel = make("section", "panel", "zones"),
+		top = make("div", "panel-head"),
+		title = make("h2", "panel-title"),
+		refresh = make("button", "ghost"),
+		list = make("div", "zone-list");
 
 	title.textContent = "Zones";
+
 	refresh.type = "button";
 	refresh.textContent = "Reload";
 	refresh.addEventListener("click", onReloadInfoClick);
 
 	top.append(title, refresh);
+
 	panel.append(top, list);
 
 	for (const [zoneId, zoneName] of zoneEntries()) {
 		const button = make("button", "zone-item", zoneId === state.activeZone ? "active" : "");
+
 		button.type = "button";
 		button.textContent = zoneDisplay(zoneName);
 		button.title = `${zoneDisplay(zoneName)} (${zoneId})`;
 		button.addEventListener("click", () => onZoneClick(zoneId));
+
 		list.append(button);
 	}
 
@@ -929,16 +1026,19 @@ function createZones() {
 
 function createCell(text, classes = []) {
 	const td = make("td", ...classes);
+
 	td.textContent = text;
-	if (text && text !== EMPTY) {
+
+	if (text && text !== "--") {
 		td.title = text;
 	}
+
 	return td;
 }
 
 function displayRecordName(record, zoneName) {
-	if (record.name === ROOT_LABEL) {
-		return zoneDisplay(zoneName || ROOT_LABEL);
+	if (record.name === "@") {
+		return zoneDisplay(zoneName || "@");
 	}
 
 	return record.name;
@@ -953,7 +1053,7 @@ function recordTags(record) {
 		return record.tags.trim();
 	}
 
-	return EMPTY;
+	return "--";
 }
 
 function recordDetails(record) {
@@ -961,49 +1061,55 @@ function recordDetails(record) {
 
 	switch (record.type) {
 		case "MX":
-			return parts[0] ? `priority ${parts[0]}` : EMPTY;
+			return parts[0] ? `priority ${parts[0]}` : "--";
 		case "SRV":
 			if (parts.length >= 3) {
 				return `prio ${parts[0]} weight ${parts[1]} port ${parts[2]}`;
 			}
-			return EMPTY;
+
+			return "--";
 		case "URI":
 			if (parts.length >= 2) {
 				return `prio ${parts[0]} weight ${parts[1]}`;
 			}
-			return EMPTY;
+
+			return "--";
 		case "CAA":
 			if (parts.length >= 2) {
 				return `flags ${parts[0]} tag ${parts[1]}`;
 			}
-			return EMPTY;
+
+			return "--";
 		case "TLSA":
 		case "SMIMEA":
 			if (parts.length >= 3) {
 				return `u ${parts[0]} s ${parts[1]} m ${parts[2]}`;
 			}
-			return EMPTY;
+
+			return "--";
 		default:
-			return EMPTY;
+			return "--";
 	}
 }
 
 function createRecords() {
-	const panel = make("section", "panel", "records");
-	const top = make("div", "panel-head");
-	const title = make("h2", "panel-title");
-	const actions = make("div", "actions");
-	const sync = make("button", "ghost");
-	const add = make("button", "button");
-	const tableWrap = make("div", "table-wrap");
-	const table = make("table", "record-table");
-	const colgroup = make("colgroup");
-	const head = make("thead");
-	const body = make("tbody");
+	const panel = make("section", "panel", "records"),
+		top = make("div", "panel-head"),
+		title = make("h2", "panel-title"),
+		actions = make("div", "actions"),
+		sync = make("button", "ghost"),
+		add = make("button", "button"),
+		tableWrap = make("div", "table-wrap"),
+		table = make("table", "record-table"),
+		colgroup = make("colgroup"),
+		head = make("thead"),
+		body = make("tbody");
 
 	title.textContent = state.activeZone ? `${zoneDisplay(activeZoneName())} records` : "Records";
+
 	sync.type = "button";
 	sync.textContent = "Sync from Cloudflare";
+
 	add.type = "button";
 	add.textContent = "New record";
 
@@ -1014,42 +1120,56 @@ function createRecords() {
 	add.addEventListener("click", onNewRecordClick);
 
 	actions.append(sync, add);
+
 	top.append(title, actions);
+
 	panel.append(top);
 
 	for (const colClass of ["col-name", "col-type", "col-content", "col-ttl", "col-tags", "col-details", "col-actions"]) {
 		const col = make("col", colClass);
+
 		colgroup.append(col);
 	}
 
 	const headRow = make("tr");
+
 	for (const label of ["Name", "Type", "Content", "TTL", "Tags", "Details", "Actions"]) {
 		const th = make("th");
+
 		th.textContent = label;
+
 		headRow.append(th);
 	}
+
 	head.append(headRow);
+
 	table.append(colgroup, head, body);
 
 	if (!state.activeZone) {
 		const empty = make("p", "empty");
+
 		empty.textContent = "No zone selected.";
+
 		panel.append(empty);
+
 		return panel;
 	}
 
 	if (!state.records.length) {
 		const empty = make("p", "empty");
+
 		empty.textContent = state.loading ? "Loading records..." : "No records in this zone yet.";
+
 		panel.append(empty);
+
 		return panel;
 	}
 
 	for (const record of state.records) {
-		const row = make("tr");
-		const controls = make("td", "row-actions", "w-actions");
-		const edit = make("button", "ghost");
-		const del = make("button", "ghost", "danger");
+		const row = make("tr"),
+			controls = make("td", "row-actions", "w-actions"),
+			edit = make("button", "ghost"),
+			del = make("button", "ghost", "danger");
 
 		row.append(
 			createCell(displayRecordName(record, activeZoneName()), ["mono", "w-name"]),
@@ -1057,11 +1177,12 @@ function createRecords() {
 			createCell(record.value, ["value", "w-content"]),
 			createCell(!record.ttl || record.ttl === 1 ? "auto" : `${record.ttl}s`, ["mono", "w-ttl"]),
 			createCell(recordTags(record), ["w-tags"]),
-			createCell(recordDetails(record), ["mono", "w-details"]),
+			createCell(recordDetails(record), ["mono", "w-details"])
 		);
 
 		edit.type = "button";
 		edit.textContent = "Edit";
+
 		del.type = "button";
 		del.textContent = "Delete";
 
@@ -1069,11 +1190,14 @@ function createRecords() {
 		del.addEventListener("click", () => onDeleteRecordClick(record));
 
 		controls.append(edit, del);
+
 		row.append(controls);
+
 		body.append(row);
 	}
 
 	tableWrap.append(table);
+
 	panel.append(tableWrap);
 
 	return panel;
@@ -1081,12 +1205,15 @@ function createRecords() {
 
 function createAuthed() {
 	const layout = make("div", "layout");
+
 	layout.append(createZones(), createRecords());
+
 	return layout;
 }
 
 function render() {
 	app.replaceChildren();
+
 	applyTheme();
 
 	const shell = make("main", "shell");
@@ -1100,23 +1227,28 @@ function render() {
 async function onLoginSubmit(event) {
 	event.preventDefault();
 
-	const formData = new FormData(event.currentTarget);
-	const token = String(formData.get("token") || "").trim();
+	const formData = new FormData(event.currentTarget),
+		token = String(formData.get("token") || "").trim();
 
 	if (!token) {
 		setStatus("Token is required.", true);
+
 		return;
 	}
 
 	state.token = token;
-	sessionStorage.setItem(TOKEN_KEY, token);
+
+	sessionStorage.setItem("plat-token", token);
 
 	try {
 		await checkInfo();
+
 		if (!state.authenticated) {
 			setStatus("Token is not valid.", true);
+
 			return;
 		}
+
 		setStatus("Authenticated.", false);
 	} catch (err) {
 		setStatus(err.message, true);
@@ -1125,6 +1257,7 @@ async function onLoginSubmit(event) {
 
 function onThemeToggleClick() {
 	state.theme = state.theme === "dark" ? "light" : "dark";
+
 	render();
 }
 
@@ -1136,14 +1269,18 @@ function onLogoutClick() {
 	state.records = [];
 	state.message = "";
 	state.error = "";
-	sessionStorage.removeItem(TOKEN_KEY);
+
+	sessionStorage.removeItem("plat-token");
+
 	setZoneHash("");
+
 	render();
 }
 
 async function onReloadInfoClick() {
 	try {
 		await checkInfo();
+
 		setStatus("Zone list updated.", false);
 	} catch (err) {
 		setStatus(err.message, true);
@@ -1203,10 +1340,13 @@ async function init() {
 
 	try {
 		await checkInfo();
+
 		if (!state.authenticated) {
-			sessionStorage.removeItem(TOKEN_KEY);
+			sessionStorage.removeItem("plat-token");
+
 			state.token = "";
 		}
+
 		render();
 	} catch (err) {
 		setStatus(err.message, true);
