@@ -1003,7 +1003,7 @@ async function fetchAllZonesFromCloudflare() {
 
 		ui.fetchAllAbortController = new AbortController();
 
-		await streamNDJson("/-/all", { method: "PATCH", signal: ui.fetchAllAbortController.signal }, message => {
+		await streamNDJson("/-/records", { method: "PATCH", signal: ui.fetchAllAbortController.signal }, message => {
 			if (message.status === "progress") {
 				const index = Number(message.index) || 0,
 					total = Number(message.total) || 0,

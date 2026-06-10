@@ -52,6 +52,19 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 	}
 }
 
+func HandleFetchAllZones(storage *Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := storage.FetchZones()
+		if err != nil {
+			abort(w, http.StatusInternalServerError, err.Error())
+
+			return
+		}
+
+		okay(w, storage.GetZones())
+	}
+}
+
 func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)

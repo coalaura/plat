@@ -60,7 +60,8 @@ func main() {
 	r.Group(func(gr chi.Router) {
 		gr.Use(authenticate(config))
 
-		gr.Patch("/-/all", HandleFetchAllRecords(storage))
+		gr.Patch("/-/zones", HandleFetchAllZones(storage))
+		gr.Patch("/-/records", HandleFetchAllRecords(storage))
 
 		gr.Get("/-/{zone}", HandleListRecords(storage))
 		gr.Patch("/-/{zone}", HandleFetchRecords(storage))
