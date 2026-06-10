@@ -596,6 +596,8 @@ button:disabled {
 .login {
 	max-width: 560px;
 	margin: auto;
+	margin-top: 50vh;
+	transform: translateY(-100%);
 	padding: 14px;
 }
 
