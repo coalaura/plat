@@ -45,6 +45,7 @@ const ui = {
 	contentSlot: null,
 	zonesSlot: null,
 	recordsSlot: null,
+	recordsScrollByZone: {},
 };
 
 function make(tag, ...classes) {
@@ -531,17 +532,22 @@ async function checkInfo() {
 		state.activeZone = zoneEntries()[0][0];
 	}
 
+	renderZones();
+	setActiveZoneSelection(true);
+
 	await loadZone(state.activeZone);
 }
 
 async function loadZone(zone) {
 	if (!zone) {
 		state.records = [];
-
-		renderAuthedPanels();
+		setActiveZoneSelection(false);
+		renderRecords();
 
 		return;
 	}
+
+	const zoneChanged = state.activeZone !== zone;
 
 	state.activeZone = zone;
 
@@ -549,9 +555,11 @@ async function loadZone(zone) {
 
 	state.records = [];
 
+	setActiveZoneSelection(zoneChanged);
+
 	state.loading = true;
 
-	renderAuthedPanels();
+	renderRecords();
 
 	try {
 		const records = await api(`/-/${encodeURIComponent(zone)}`);
@@ -570,7 +578,8 @@ async function loadZone(zone) {
 	} finally {
 		state.loading = false;
 
-		renderAuthedPanels();
+		renderRecords();
+		setActiveZoneSelection(zoneChanged);
 	}
 }
 
@@ -821,6 +830,8 @@ function openRecordModal(currentRecord) {
 
 	document.body.append(overlay);
 
+	const close = () => overlay.remove();
+
 	let typedCache = parseRecordValue(typeInput.value, rawInput.value);
 
 	const collectTypedFields = () => {
@@ -865,8 +876,8 @@ function openRecordModal(currentRecord) {
 		typedDescription.classList.toggle("hidden", modeSelect.value !== "typed");
 	};
 
-	closeButton.addEventListener("click", () => overlay.remove());
-	cancelButton.addEventListener("click", () => overlay.remove());
+	closeButton.addEventListener("click", close);
+	cancelButton.addEventListener("click", close);
 
 	overlay.addEventListener("click", event => {
 		if (event.target === overlay) {
@@ -959,7 +970,8 @@ function createStatus() {
 	const status = make("div", "status");
 
 	if (!state.message && !state.error) {
-		status.classList.add("hidden");
+		status.classList.add("idle");
+		status.textContent = "Ready";
 
 		return status;
 	}
@@ -1026,6 +1038,7 @@ function createZones() {
 		const button = make("button", "zone-item", zoneId === state.activeZone ? "active" : "");
 
 		button.type = "button";
+		button.dataset.zoneId = zoneId;
 		button.textContent = zoneDisplay(zoneName);
 		button.title = `${zoneDisplay(zoneName)} (${zoneId})`;
 		button.addEventListener("click", () => onZoneClick(zoneId));
@@ -1034,6 +1047,69 @@ function createZones() {
 	}
 
 	return panel;
+}
+
+function setActiveZoneSelection(ensureVisible = false) {
+	if (!ui.zonesSlot) {
+		return;
+	}
+
+	let activeButton = null;
+
+	for (const button of ui.zonesSlot.querySelectorAll(".zone-item")) {
+		const isActive = button.dataset.zoneId === state.activeZone;
+
+		button.classList.toggle("active", isActive);
+
+		if (isActive) {
+			activeButton = button;
+		}
+	}
+
+	if (ensureVisible && activeButton) {
+		updateActiveZoneScroll();
+	}
+}
+
+function updateActiveZoneScroll() {
+	const activeButton = ui.zonesSlot?.querySelector(`.zone-item[data-zone-id="${state.activeZone}"]`);
+
+	if (!activeButton) {
+		return;
+	}
+
+	activeButton.scrollIntoView({
+		block: "nearest",
+		inline: "nearest",
+	});
+}
+
+function saveScrollPosition(root, selector) {
+	const element = root?.querySelector(selector);
+
+	if (!element) {
+		return null;
+	}
+
+	return {
+		top: element.scrollTop,
+		left: element.scrollLeft,
+	};
+}
+
+function restoreScrollPosition(root, selector, position) {
+	if (!position) {
+		return;
+	}
+
+	const element = root?.querySelector(selector);
+
+	if (!element) {
+		return;
+	}
+
+	element.scrollTop = position.top;
+	element.scrollLeft = position.left;
 }
 
 function createCell(text, classes = []) {
@@ -1236,6 +1312,7 @@ function mountShell() {
 function clearAuthedSlots() {
 	ui.zonesSlot = null;
 	ui.recordsSlot = null;
+	ui.recordsScrollByZone = {};
 }
 
 function ensureAuthedLayout() {
@@ -1275,8 +1352,11 @@ function renderZones() {
 	}
 
 	ensureAuthedLayout();
+	const scrollPosition = saveScrollPosition(ui.zonesSlot, ".zone-list");
 
 	ui.zonesSlot.replaceChildren(createZones());
+
+	restoreScrollPosition(ui.zonesSlot, ".zone-list", scrollPosition);
 }
 
 function renderRecords() {
@@ -1286,7 +1366,16 @@ function renderRecords() {
 
 	ensureAuthedLayout();
 
+	const scrollPosition = saveScrollPosition(ui.recordsSlot, ".table-wrap"),
+		zoneId = state.activeZone;
+
+	if (scrollPosition && zoneId) {
+		ui.recordsScrollByZone[zoneId] = scrollPosition;
+	}
+
 	ui.recordsSlot.replaceChildren(createRecords());
+
+	restoreScrollPosition(ui.recordsSlot, ".table-wrap", scrollPosition || ui.recordsScrollByZone[zoneId] || null);
 }
 
 function renderAuthedPanels() {
@@ -1301,6 +1390,7 @@ function renderContent() {
 
 	if (!state.authenticated) {
 		clearAuthedSlots();
+
 		ui.contentSlot.replaceChildren(createLogin());
 
 		return;
@@ -1427,6 +1517,11 @@ async function onDeleteRecordClick(record) {
 
 async function init() {
 	window.addEventListener("hashchange", onHashChange);
+	window.addEventListener("load", updateActiveZoneScroll);
+
+	if (document.fonts?.ready) {
+		document.fonts.ready.then(updateActiveZoneScroll);
+	}
 
 	render();
 

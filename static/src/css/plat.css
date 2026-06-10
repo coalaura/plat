@@ -146,6 +146,12 @@ textarea {
 	color: var(--danger);
 }
 
+.status.idle {
+	color: var(--ink-muted);
+	border-color: var(--line);
+	background: color-mix(in srgb, var(--bg-elevated) 82%, var(--bg-soft));
+}
+
 .layout {
 	display: grid;
 	grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
@@ -309,6 +315,10 @@ textarea {
 
 .record-table tbody tr:last-child td {
 	border-bottom: 0;
+}
+
+.record-table tbody tr:hover td {
+	background: color-mix(in srgb, var(--accent-soft) 35%, var(--bg-elevated));
 }
 
 .record-table .value {
