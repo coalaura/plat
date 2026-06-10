@@ -104,6 +104,22 @@ textarea {
 	gap: 8px;
 }
 
+.title-wrap {
+	display: flex;
+	gap: 8px;
+}
+
+.title-wrap::before {
+	content: "";
+	display: block;
+	width: 35px;
+	height: 35px;
+	background-image: url(logo.svg);
+	background-position: center;
+	background-size: contain;
+	background-repeat: no-repeat;
+}
+
 .title {
 	margin: 0;
 	font-size: 1.7rem;

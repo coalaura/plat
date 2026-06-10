@@ -1544,7 +1544,7 @@ function createLogin() {
 	tokenInput.type = "password";
 	tokenInput.name = "token";
 	tokenInput.value = state.token;
-	tokenInput.placeholder = "Paste access token";
+	tokenInput.placeholder = "Access token";
 
 	action.type = "submit";
 	action.textContent = "Connect";
