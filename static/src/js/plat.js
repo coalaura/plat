@@ -1441,7 +1441,7 @@ async function onLoginSubmit(event) {
 function onThemeToggleClick() {
 	state.theme = state.theme === "dark" ? "light" : "dark";
 
-	render();
+	applyTheme();
 }
 
 function onLogoutClick() {
