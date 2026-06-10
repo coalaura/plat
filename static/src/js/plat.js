@@ -931,14 +931,11 @@ function openRecordModal(currentRecord) {
 function createHeader() {
 	const head = make("header", "top"),
 		titleWrap = make("div", "title-wrap"),
-		title = make("h1", "title"),
-		subtitle = make("p", "subtitle");
+		title = make("h1", "title");
 
-	title.textContent = "plat DNS";
+	title.textContent = "plat";
 
-	subtitle.textContent = "Self-hosted DNS control for Cloudflare zones.";
-
-	titleWrap.append(title, subtitle);
+	titleWrap.append(title);
 
 	head.append(titleWrap);
 
