@@ -68,44 +68,55 @@ function randomId() {
 }
 
 function quote(value) {
-	if (!value) {
-		return "\"\"";
-	}
-
-	const clean = String(value).trim().replace(/"/g, '\\"');
-
-	if (clean.startsWith("\"") && clean.endsWith("\"")) {
-		return clean;
-	}
-
-	return `"${clean}"`;
-}
-
-function unquote(value) {
-	const text = String(value || "").trim();
-	if (!text) {
-		return "";
-	}
-
-	if (text.startsWith("\"") && text.endsWith("\"") && text.length >= 2) {
-		return text.slice(1, -1).replace(/\\"/g, '"');
-	}
-
-	return text;
+	return JSON.stringify(String(value || ""));
 }
 
 function splitTokens(value) {
-	const text = String(value || "").trim();
-	if (!text) {
-		return [];
+	const text = String(value || "");
+	const fields = [];
+	let current = "";
+	let inQuotes = false;
+	let escaped = false;
+
+	for (let index = 0; index < text.length; index += 1) {
+		const char = text[index];
+
+		if (escaped) {
+			current += char;
+			escaped = false;
+			continue;
+		}
+
+		if (char === "\\") {
+			escaped = true;
+			continue;
+		}
+
+		if (char === '"') {
+			inQuotes = !inQuotes;
+			continue;
+		}
+
+		if (/\s/.test(char) && !inQuotes) {
+			if (current) {
+				fields.push(current);
+				current = "";
+			}
+			continue;
+		}
+
+		current += char;
 	}
 
-	const matches = text.match(/"(?:\\"|[^"])*"|\S+/g);
-	return matches || [];
+	if (current) {
+		fields.push(current);
+	}
+
+	return fields;
 }
 
 function parseByParts(value, keys) {
-	const parts = splitTokens(value).map(unquote);
+	const parts = splitTokens(value);
 	const result = {};
 
 	for (let index = 0; index < keys.length; index += 1) {
@@ -120,17 +131,17 @@ function parseWithRemainder(value, headKeys, tailKey) {
 	const result = {};
 
 	for (let index = 0; index < headKeys.length; index += 1) {
-		result[headKeys[index]] = unquote(tokens[index] || "");
+		result[headKeys[index]] = tokens[index] || "";
 	}
 
 	const rest = tokens.slice(headKeys.length).join(" ");
-	result[tailKey] = unquote(rest);
+	result[tailKey] = rest;
 
 	return result;
 }
 
 function parseLoc(value) {
-	const parts = splitTokens(value).map(unquote);
+	const parts = splitTokens(value);
 	return {
 		lat: parts.slice(0, 4).join(" "),
 		lng: parts.slice(4, 8).join(" "),
@@ -193,7 +204,7 @@ function recordTypeConfig(type) {
 			description: "Arbitrary text payload.",
 			fields: [{ key: "text", label: "Text", placeholder: "v=spf1 include:_spf.example.com ~all", required: true, hint: "Use raw text value.", multiline: true, wide: true, rows: 4 }],
 			build: (data) => data.text,
-			parse: (value) => ({ text: unquote(value) }),
+			parse: (value) => ({ text: splitTokens(value).join(" ") }),
 		},
 		MX: {
 			description: "Mail exchanger with priority.",
@@ -694,7 +705,7 @@ function openRecordModal(currentRecord) {
 	const ttlHint = make("span", "field-hint");
 	const ttlInput = make("input", "input");
 	ttlTitle.textContent = "TTL (seconds)";
-	ttlHint.textContent = "Stored as integer seconds.";
+	ttlHint.textContent = "Stored as integer seconds. Use 1 for auto.";
 	ttlInput.type = "number";
 	ttlInput.min = "1";
 	ttlInput.step = "1";
@@ -946,7 +957,7 @@ function recordTags(record) {
 }
 
 function recordDetails(record) {
-	const parts = splitTokens(record.value).map(unquote);
+	const parts = splitTokens(record.value);
 
 	switch (record.type) {
 		case "MX":
@@ -1044,7 +1055,7 @@ function createRecords() {
 			createCell(displayRecordName(record, activeZoneName()), ["mono", "w-name"]),
 			createCell(record.type, ["mono", "w-type"]),
 			createCell(record.value, ["value", "w-content"]),
-			createCell(record.ttl ? `${record.ttl}s` : "auto", ["mono", "w-ttl"]),
+			createCell(!record.ttl || record.ttl === 1 ? "auto" : `${record.ttl}s`, ["mono", "w-ttl"]),
 			createCell(recordTags(record), ["w-tags"]),
 			createCell(recordDetails(record), ["mono", "w-details"]),
 		);
@@ -1064,10 +1075,6 @@ function createRecords() {
 
 	tableWrap.append(table);
 	panel.append(tableWrap);
-
-	const note = make("p", "note");
-	note.textContent = "Delete and update actions now target the record id.";
-	panel.append(note);
 
 	return panel;
 }
