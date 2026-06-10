@@ -13,6 +13,8 @@
 	--accent: #4ec6d6;
 	--accent-soft: #143843;
 	--button-ink: #093846;
+	--warn: #ecc844;
+	--warn-soft: #352a13;
 	--danger: #ff8282;
 	--danger-soft: #3f1b1f;
 	--ok-soft: #163225;
@@ -31,6 +33,8 @@
 	--accent: #0b5a78;
 	--accent-soft: #d7ebf2;
 	--button-ink: #ffffff;
+	--warn: #6b5100;
+	--warn-soft: #fdf3cf;
 	--danger: #8b1f1f;
 	--danger-soft: #f8dfdf;
 	--ok-soft: #ddeee3;
@@ -79,10 +83,11 @@ textarea {
 }
 
 .shell {
+	display: flex;
+	flex-direction: column;
 	max-width: 1720px;
 	width: min(96vw, 1720px);
 	margin: 0 auto;
-	display: grid;
 	gap: 14px;
 }
 
@@ -521,6 +526,12 @@ textarea {
 .ghost:hover {
 	background: color-mix(in srgb, var(--bg-soft) 70%, var(--ink) 6%);
 	border-color: var(--line-strong);
+}
+
+.ghost.warn {
+	color: var(--warn);
+	border-color: color-mix(in srgb, var(--warn) 45%, var(--line));
+	background: color-mix(in srgb, var(--warn-soft) 90%, var(--bg-soft));
 }
 
 .ghost.danger {

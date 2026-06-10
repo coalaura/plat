@@ -1502,10 +1502,10 @@ function createHeader() {
 	controls.append(theme);
 
 	if (state.authenticated) {
-		const fetchAll = make("button", "ghost");
+		const fetchAll = make("button", "ghost", "warn");
 
 		fetchAll.type = "button";
-		fetchAll.textContent = state.fetchingAllRecords ? "Fetching all..." : "Fetch all";
+		fetchAll.textContent = state.fetchingAllRecords ? "Syncing all..." : "Sync all";
 		fetchAll.disabled = state.fetchingAllRecords;
 		fetchAll.addEventListener("click", onFetchAllClick);
 
