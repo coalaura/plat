@@ -7,11 +7,13 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/coalaura/etch"
 	"github.com/coalaura/tape"
 	"github.com/goccy/go-yaml"
+	"github.com/miekg/dns"
 )
 
 type Storage struct {
@@ -300,4 +302,46 @@ func (s *Storage) Store() error {
 	file.Close()
 
 	return os.Rename("records.tmp", "records.yml")
+}
+
+func (s *Storage) LookupLocal(qName string, qType string) ([]dns.RR, bool, bool) {
+	s.mx.RLock()
+	defer s.mx.RUnlock()
+
+	var (
+		answers     []dns.RR
+		nameExists  bool
+		zoneMatched bool
+	)
+
+	for _, zone := range s.zones {
+		zone.mx.RLock()
+
+		zoneName := strings.ToLower(strings.TrimSuffix(zone.Name, "."))
+
+		if qName == zoneName || strings.HasSuffix(qName, "."+zoneName) {
+			zoneMatched = true
+
+			for _, rec := range zone.Records {
+				recName := strings.ToLower(strings.TrimSuffix(rec.FullName(zone.Name), "."))
+
+				if recName == qName {
+					nameExists = true
+
+					if strings.EqualFold(rec.Type, qType) {
+						rr, err := dns.NewRR(fmt.Sprintf("%s. %d IN %s %s", qName, rec.TTL, rec.Type, rec.Content))
+						if err == nil {
+							answers = append(answers, rr)
+						} else {
+							log.Warnln(err)
+						}
+					}
+				}
+			}
+		}
+
+		zone.mx.RUnlock()
+	}
+
+	return answers, nameExists, zoneMatched
 }

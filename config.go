@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 
 	"github.com/goccy/go-yaml"
 )
@@ -99,10 +100,24 @@ func (c *Config) Validate() error {
 		}
 
 		if c.DNS.Fallback != "" {
-			ip := net.ParseIP(c.DNS.Fallback)
+			host, portStr, err := net.SplitHostPort(c.DNS.Fallback)
+			if err != nil {
+				ip := net.ParseIP(c.DNS.Fallback)
+				if ip == nil {
+					return fmt.Errorf("dns.fallback %q is not a valid IP address", c.DNS.Fallback)
+				}
 
-			if ip.To16() == nil {
-				return fmt.Errorf("dns.fallback is an invalid ip address")
+				c.DNS.Fallback = net.JoinHostPort(c.DNS.Fallback, "53")
+			} else {
+				ip := net.ParseIP(host)
+				if ip == nil {
+					return fmt.Errorf("dns.fallback host %q is not a valid IP address", host)
+				}
+
+				port, err := strconv.Atoi(portStr)
+				if err != nil || port < 1 || port > 65535 {
+					return fmt.Errorf("dns.fallback has an invalid port %q", portStr)
+				}
 			}
 		}
 	}

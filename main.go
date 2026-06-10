@@ -32,6 +32,14 @@ func main() {
 	err = storage.FetchZones()
 	log.MustFail(err)
 
+	if config.DNS.Enabled {
+		log.Println("Starting DNS server...")
+
+		dns := NewDNSServer(config, storage)
+
+		defer dns.Close()
+	}
+
 	log.Println("Preparing router...")
 
 	r := chi.NewRouter()
