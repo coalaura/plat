@@ -70,21 +70,25 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 
 		for zone := range zones {
 			writeNDJson(w, flusher, map[string]any{
-				"zone":  zone,
-				"index": index,
-				"total": total,
+				"status": "progress",
+				"zone":   zone,
+				"index":  index,
+				"total":  total,
 			})
 
 			err := storage.FetchRecords(zone)
 			if err != nil {
-				abort(w, http.StatusInternalServerError, err.Error())
+				writeNDJson(w, flusher, map[string]string{
+					"status": "failed",
+					"error":  err.Error(),
+				})
 
 				return
 			}
 		}
 
-		writeNDJson(w, flusher, map[string]bool{
-			"completed": true,
+		writeNDJson(w, flusher, map[string]string{
+			"status": "done",
 		})
 	}
 }
