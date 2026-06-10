@@ -8,7 +8,9 @@ import (
 )
 
 type DNSServer struct {
-	server   *dns.Server
+	udp *dns.Server
+	tcp *dns.Server
+
 	storage  *Storage
 	fallback string
 }
@@ -21,30 +23,34 @@ func NewDNSServer(config *Config, storage *Storage) *DNSServer {
 		fallback: config.DNS.Fallback,
 	}
 
-	server.server = &dns.Server{
+	server.udp = &dns.Server{
 		Addr:    addr,
 		Net:     "udp",
 		Handler: dns.HandlerFunc(server.handleDNSRequest),
 	}
 
-	log.Printf("DNS server listening on %s (UDP)\n", addr)
+	server.tcp = &dns.Server{
+		Addr:    addr,
+		Net:     "tcp",
+		Handler: dns.HandlerFunc(server.handleDNSRequest),
+	}
 
-	go func() {
-		err := server.server.ListenAndServe()
-		if err != nil {
-			log.Warnf("DNS server error: %v", err)
-		}
-	}()
+	log.Printf("DNS server listening on %s\n", addr)
+
+	go server.udp.ListenAndServe()
+	go server.tcp.ListenAndServe()
 
 	return server
 }
 
 func (s *DNSServer) Close() {
-	if s.server == nil {
-		return
+	if s.udp != nil {
+		s.udp.Shutdown()
 	}
 
-	s.server.Shutdown()
+	if s.tcp != nil {
+		s.tcp.Shutdown()
+	}
 }
 
 func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
@@ -52,6 +58,7 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	msg.SetReply(r)
 
+	msg.Compress = true
 	msg.Authoritative = true
 
 	if s.fallback != "" {
@@ -90,6 +97,8 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 		in, _, err := client.Exchange(r, s.fallback)
 		if err == nil {
+			in.Id = r.Id
+
 			w.WriteMsg(in)
 
 			return
