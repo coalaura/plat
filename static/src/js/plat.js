@@ -80,6 +80,38 @@ function quote(value) {
 	return JSON.stringify(String(value || ""));
 }
 
+function decodeTXT(str) {
+	str = String(str || "").trim();
+
+	if (!str.startsWith('"')) {
+		return str;
+	}
+
+	let result = "",
+		inQuotes = false,
+		escaped = false;
+
+	for (const char of str) {
+		if (escaped) {
+			result += char;
+
+			escaped = false;
+
+			continue;
+		}
+
+		if (inQuotes && char === "\\") {
+			escaped = true;
+		} else if (char === '"') {
+			inQuotes = !inQuotes;
+		} else if (inQuotes) {
+			result += char;
+		}
+	}
+
+	return result;
+}
+
 function splitTokens(value) {
 	const text = String(value || ""),
 		fields = [];
@@ -156,13 +188,40 @@ function parseWithRemainder(value, headKeys, tailKey) {
 function parseLoc(value) {
 	const parts = splitTokens(value);
 
+	let pos = 0;
+
+	const readCoord = (dir1, dir2) => {
+		const start = pos;
+
+		while (pos < parts.length) {
+			const tok = parts[pos].toUpperCase();
+
+			if (tok === dir1 || tok === dir2) {
+				pos++;
+
+				break;
+			}
+
+			pos++;
+		}
+
+		return parts.slice(start, pos).join(" ");
+	};
+
+	const lat = readCoord("N", "S"),
+		lng = readCoord("E", "W"),
+		alt = parts[pos++] || "",
+		size = parts[pos++] || "",
+		hPrec = parts[pos++] || "",
+		vPrec = parts[pos++] || "";
+
 	return {
-		lat: parts.slice(0, 4).join(" "),
-		lng: parts.slice(4, 8).join(" "),
-		alt: parts[8] || "",
-		size: parts[9] || "",
-		hPrec: parts[10] || "",
-		vPrec: parts[11] || "",
+		lat: lat,
+		lng: lng,
+		alt: alt,
+		size: size,
+		hPrec: hPrec,
+		vPrec: vPrec,
 	};
 }
 
@@ -230,7 +289,7 @@ function recordTypeConfig(type) {
 				},
 			],
 			build: data => quote(data.text),
-			parse: value => ({ text: splitTokens(value).join(" ") }),
+			parse: value => ({ text: decodeTXT(value) }),
 		},
 		MX: {
 			description: "Mail exchanger with priority.",
@@ -467,10 +526,7 @@ function setStatus(message, isError) {
 	ui.notificationRoot.append(notification.element);
 	ui.notificationItems.set(notification.id, notification.element);
 
-	const timeout = window.setTimeout(
-		() => dismissNotification(notification.id),
-		isError ? 7000 : 4500
-	);
+	const timeout = window.setTimeout(() => dismissNotification(notification.id), isError ? 7000 : 4500);
 
 	ui.notificationTimers.set(notification.id, timeout);
 }
