@@ -1384,7 +1384,7 @@ function recordTags(record) {
 }
 
 function recordDetails(record) {
-	const parts = splitTokens(record.content);
+	const parts = splitTokens(record.value);
 
 	switch (record.type) {
 		case "MX":
@@ -1411,6 +1411,36 @@ function recordDetails(record) {
 		case "SMIMEA":
 			if (parts.length >= 3) {
 				return `u ${parts[0]} s ${parts[1]} m ${parts[2]}`;
+			}
+
+			return "--";
+		case "SSHFP":
+			if (parts.length >= 2) {
+				return `algo ${parts[0]} type ${parts[1]}`;
+			}
+
+			return "--";
+		case "DS":
+			if (parts.length >= 3) {
+				return `tag ${parts[0]} algo ${parts[1]} digest ${parts[2]}`;
+			}
+
+			return "--";
+		case "DNSKEY":
+			if (parts.length >= 3) {
+				return `flags ${parts[0]} proto ${parts[1]} algo ${parts[2]}`;
+			}
+
+			return "--";
+		case "CERT":
+			if (parts.length >= 3) {
+				return `type ${parts[0]} tag ${parts[1]} algo ${parts[2]}`;
+			}
+
+			return "--";
+		case "NAPTR":
+			if (parts.length >= 2) {
+				return `order ${parts[0]} pref ${parts[1]}`;
 			}
 
 			return "--";
