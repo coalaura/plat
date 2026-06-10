@@ -66,9 +66,16 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 		var (
 			index = 1
 			total = len(zones)
+			ctx   = r.Context()
 		)
 
 		for zone := range zones {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			writeNDJson(w, flusher, map[string]any{
 				"status": "progress",
 				"zone":   zone,
