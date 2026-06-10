@@ -2,6 +2,7 @@ package main
 
 import (
 	"sort"
+	"strings"
 	"sync"
 )
 
@@ -17,6 +18,10 @@ type zoneData struct {
 	ID      string   `yaml:"id"`
 	Name    string   `yaml:"name"`
 	Records []Record `yaml:"records"`
+}
+
+func (z *Zone) MatchesName(name string) bool {
+	return name == z.Name || strings.HasSuffix(name, "."+z.Name)
 }
 
 func (z *Zone) RecordsList() []Record {
@@ -58,7 +63,9 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 	z.Records = make(map[string]*Record, len(data.Records))
 
 	for _, rec := range data.Records {
-		z.Records[rec.Name] = &rec
+		rec.Update(z.Name)
+
+		z.Records[rec.ID] = &rec
 	}
 
 	return nil

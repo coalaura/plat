@@ -57,8 +57,6 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	if len(r.Question) == 0 {
 		w.WriteMsg(&msg)
 
-		log.Println("no question")
-
 		return
 	}
 

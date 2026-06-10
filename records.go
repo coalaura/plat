@@ -7,6 +7,7 @@ import (
 
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/dns"
+	mdns "github.com/miekg/dns"
 )
 
 // A, AAAA, CAA, CERT, CNAME, DNSKEY, DS, HTTPS, LOC, MX, NAPTR, NS, OPENPGPKEY, PTR, SMIMEA, SRV, SSHFP, SVCB, TLSA, TXT, URI
@@ -17,14 +18,42 @@ type Record struct {
 	Name    string `yaml:"name" json:"name"`
 	Content string `yaml:"content" json:"content"`
 	TTL     int64  `yaml:"ttl,omitempty" json:"ttl,omitempty"`
+
+	full string
+	rr   mdns.RR
 }
 
-func (r Record) FullName(zoneName string) string {
+func (r Record) GetFullName() string {
+	return r.full
+}
+
+func (r Record) GetRR() mdns.RR {
+	return r.rr
+}
+
+func (r Record) MatchesName(query string) bool {
+	return r.full == query
+}
+
+func (r Record) MatchesType(typ string) bool {
+	return r.Type == typ
+}
+
+func (r *Record) Update(zoneName string) error {
 	if r.Name == "@" {
-		return zoneName
+		r.full = zoneName
+	} else {
+		r.full = r.Name + "." + zoneName
 	}
 
-	return r.Name + "." + zoneName
+	rr, err := mdns.NewRR(fmt.Sprintf("%s %d IN %s %s", r.full, r.TTL, r.Type, r.Content))
+	if err != nil {
+		return err
+	}
+
+	r.rr = rr
+
+	return nil
 }
 
 func (r Record) Equals(r2 Record) bool {

@@ -7,7 +7,6 @@ import (
 	"maps"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 
 	"github.com/coalaura/etch"
@@ -132,6 +131,8 @@ func (s *Storage) SetRecord(zoneId string, record *Record) error {
 		return err
 	}
 
+	record.Update(zone.Name)
+
 	zone.Records[record.ID] = record
 
 	return nil
@@ -218,6 +219,8 @@ func (s *Storage) FetchRecords(zoneId string) error {
 	}
 
 	for _, record := range records {
+		record.Update(zone.Name)
+
 		zone.Records[record.ID] = record
 	}
 
@@ -243,24 +246,24 @@ func (s *Storage) Store() error {
 	snap := make(map[string]zoneData, len(s.zones))
 	comments := make(yaml.CommentMap, len(s.zones))
 
-	names := slices.Sorted(maps.Keys(s.zones))
+	ids := slices.Sorted(maps.Keys(s.zones))
 
 	var buf tape.Buffer
 
-	for _, name := range names {
-		zone := s.zones[name]
+	for _, id := range ids {
+		zone := s.zones[id]
 
 		zone.mx.RLock()
 		data := zone.ZoneData()
 		zone.mx.RUnlock()
 
-		snap[name] = data
+		snap[id] = data
 
 		buf.Reset()
-		buf.Grow(len(name) + 4)
+		buf.Grow(len(id) + 4)
 
 		buf.WriteString("$.'")
-		etch.Replace(&buf, name, "'", `\'`, -1)
+		etch.Replace(&buf, id, "'", `\'`, -1)
 		buf.WriteByte('\'')
 
 		zonePath := buf.String()
@@ -280,7 +283,7 @@ func (s *Storage) Store() error {
 			buf.WriteByte(']')
 
 			comments[buf.String()] = []*yaml.Comment{
-				yaml.HeadComment(" " + rec.FullName(zone.Name)),
+				yaml.HeadComment(" " + rec.GetFullName()),
 			}
 		}
 	}
@@ -317,24 +320,23 @@ func (s *Storage) LookupLocal(qName string, qType string) ([]dns.RR, bool, bool)
 	for _, zone := range s.zones {
 		zone.mx.RLock()
 
-		zoneName := strings.ToLower(strings.TrimSuffix(zone.Name, "."))
+		if !zone.MatchesName(qName) {
+			zone.mx.RUnlock()
 
-		if qName == zoneName || strings.HasSuffix(qName, "."+zoneName) {
-			zoneMatched = true
+			continue
+		}
 
-			for _, rec := range zone.Records {
-				recName := strings.ToLower(strings.TrimSuffix(rec.FullName(zone.Name), "."))
+		zoneMatched = true
 
-				if recName == qName {
-					nameExists = true
+		for _, rec := range zone.Records {
+			if rec.MatchesName(qName) {
+				nameExists = true
 
-					if strings.EqualFold(rec.Type, qType) {
-						rr, err := dns.NewRR(fmt.Sprintf("%s. %d IN %s %s", qName, rec.TTL, rec.Type, rec.Content))
-						if err == nil {
-							answers = append(answers, rr)
-						} else {
-							log.Warnln(err)
-						}
+				if rec.MatchesType(qType) {
+					rr := rec.GetRR()
+
+					if rr != nil {
+						answers = append(answers, rr)
 					}
 				}
 			}
