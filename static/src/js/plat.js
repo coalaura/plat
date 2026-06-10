@@ -37,7 +37,7 @@ let state = {
 	token: sessionStorage.getItem(TOKEN_KEY) || "",
 	theme: localStorage.getItem(THEME_KEY) || DEFAULT_THEME,
 	authenticated: false,
-	zones: [],
+	zones: {},
 	activeZone: "",
 	records: [],
 	loading: false,
@@ -362,12 +362,23 @@ function recordTypeConfig(type) {
 	};
 }
 
-function normalizeZone(zone) {
-	return zone.endsWith(".") ? zone : `${zone}.`;
-}
-
 function zoneDisplay(zone) {
 	return zone.endsWith(".") ? zone.slice(0, -1) : zone;
+}
+
+function zoneEntries() {
+	return Object.entries(state.zones).sort((a, b) => {
+		const nameSort = zoneDisplay(a[1]).localeCompare(zoneDisplay(b[1]));
+		if (nameSort !== 0) {
+			return nameSort;
+		}
+
+		return a[0].localeCompare(b[0]);
+	});
+}
+
+function activeZoneName() {
+	return state.zones[state.activeZone] || "";
 }
 
 function zoneFromHash() {
@@ -377,7 +388,7 @@ function zoneFromHash() {
 	}
 
 	try {
-		return normalizeZone(decodeURIComponent(raw));
+		return decodeURIComponent(raw);
 	} catch {
 		return "";
 	}
@@ -391,7 +402,7 @@ function setZoneHash(zone) {
 		return;
 	}
 
-	const nextHash = `${HASH_PREFIX}${encodeURIComponent(zoneDisplay(zone))}`;
+	const nextHash = `${HASH_PREFIX}${encodeURIComponent(zone)}`;
 	if (window.location.hash !== nextHash) {
 		history.replaceState(null, "", `${window.location.pathname}${window.location.search}${nextHash}`);
 	}
@@ -448,7 +459,8 @@ async function checkInfo() {
 	const info = await api("/-/info");
 
 	state.authenticated = Boolean(info?.authenticated);
-	state.zones = Array.isArray(info?.zones) ? info.zones : [];
+	const zones = info?.zones;
+	state.zones = zones && typeof zones === "object" && !Array.isArray(zones) ? zones : {};
 
 	if (!state.authenticated) {
 		state.activeZone = "";
@@ -456,17 +468,17 @@ async function checkInfo() {
 		return;
 	}
 
-	if (!state.zones.length) {
+	if (!Object.keys(state.zones).length) {
 		state.activeZone = "";
 		state.records = [];
 		return;
 	}
 
 	const hashZone = zoneFromHash();
-	if (hashZone && state.zones.includes(hashZone)) {
+	if (hashZone && state.zones[hashZone]) {
 		state.activeZone = hashZone;
-	} else if (!state.activeZone || !state.zones.includes(state.activeZone)) {
-		state.activeZone = state.zones[0];
+	} else if (!state.activeZone || !state.zones[state.activeZone]) {
+		state.activeZone = zoneEntries()[0][0];
 	}
 
 	await loadZone(state.activeZone);
@@ -482,7 +494,7 @@ async function loadZone(zone) {
 	render();
 
 	try {
-		const records = await api(`/-/${encodeURIComponent(normalizeZone(zone))}`);
+		const records = await api(`/-/${encodeURIComponent(zone)}`);
 		state.records = Array.isArray(records) ? records : [];
 		state.activeZone = zone;
 		setZoneHash(zone);
@@ -506,7 +518,7 @@ async function refreshZoneFromCloudflare() {
 	render();
 
 	try {
-		const records = await api(`/-/${encodeURIComponent(normalizeZone(state.activeZone))}`, {
+		const records = await api(`/-/${encodeURIComponent(state.activeZone)}`, {
 			method: "PATCH",
 		});
 
@@ -521,7 +533,7 @@ async function refreshZoneFromCloudflare() {
 }
 
 async function saveRecord(record, isUpdate) {
-	await api(`/-/${encodeURIComponent(normalizeZone(state.activeZone))}`, {
+	await api(`/-/${encodeURIComponent(state.activeZone)}`, {
 		method: isUpdate ? "PUT" : "POST",
 		body: JSON.stringify(record),
 	});
@@ -531,7 +543,7 @@ async function saveRecord(record, isUpdate) {
 }
 
 async function deleteRecord(record) {
-	await api(`/-/${encodeURIComponent(normalizeZone(state.activeZone))}/${encodeURIComponent(record.id)}`, {
+	await api(`/-/${encodeURIComponent(state.activeZone)}/${encodeURIComponent(record.id)}`, {
 		method: "DELETE",
 	});
 
@@ -892,12 +904,12 @@ function createZones() {
 	top.append(title, refresh);
 	panel.append(top, list);
 
-	for (const zone of state.zones) {
-		const button = make("button", "zone-item", zone === state.activeZone ? "active" : "");
+	for (const [zoneId, zoneName] of zoneEntries()) {
+		const button = make("button", "zone-item", zoneId === state.activeZone ? "active" : "");
 		button.type = "button";
-		button.textContent = zoneDisplay(zone);
-		button.title = zoneDisplay(zone);
-		button.addEventListener("click", () => onZoneClick(zone));
+		button.textContent = zoneDisplay(zoneName);
+		button.title = `${zoneDisplay(zoneName)} (${zoneId})`;
+		button.addEventListener("click", () => onZoneClick(zoneId));
 		list.append(button);
 	}
 
@@ -913,9 +925,9 @@ function createCell(text, classes = []) {
 	return td;
 }
 
-function displayRecordName(record, zone) {
+function displayRecordName(record, zoneName) {
 	if (record.name === ROOT_LABEL) {
-		return zoneDisplay(zone);
+		return zoneDisplay(zoneName || ROOT_LABEL);
 	}
 
 	return record.name;
@@ -978,7 +990,7 @@ function createRecords() {
 	const head = make("thead");
 	const body = make("tbody");
 
-	title.textContent = state.activeZone ? `${zoneDisplay(state.activeZone)} records` : "Records";
+	title.textContent = state.activeZone ? `${zoneDisplay(activeZoneName())} records` : "Records";
 	sync.type = "button";
 	sync.textContent = "Sync from Cloudflare";
 	add.type = "button";
@@ -1029,7 +1041,7 @@ function createRecords() {
 		const del = make("button", "ghost", "danger");
 
 		row.append(
-			createCell(displayRecordName(record, state.activeZone), ["mono", "w-name"]),
+			createCell(displayRecordName(record, activeZoneName()), ["mono", "w-name"]),
 			createCell(record.type, ["mono", "w-type"]),
 			createCell(record.value, ["value", "w-content"]),
 			createCell(record.ttl ? `${record.ttl}s` : "auto", ["mono", "w-ttl"]),
@@ -1112,7 +1124,7 @@ function onThemeToggleClick() {
 function onLogoutClick() {
 	state.token = "";
 	state.authenticated = false;
-	state.zones = [];
+	state.zones = {};
 	state.activeZone = "";
 	state.records = [];
 	state.message = "";
@@ -1141,7 +1153,7 @@ async function onHashChange() {
 	}
 
 	const hashZone = zoneFromHash();
-	if (!hashZone || hashZone === state.activeZone || !state.zones.includes(hashZone)) {
+	if (!hashZone || hashZone === state.activeZone || !state.zones[hashZone]) {
 		return;
 	}
 

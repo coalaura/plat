@@ -178,6 +178,8 @@ func (s *Storage) FetchZones() error {
 
 	for _, zone := range zones {
 		s.zoneNames = append(s.zoneNames, zone.Name)
+
+		s.zoneMap[zone.ID] = zone
 	}
 
 	sort.Strings(s.zoneNames)

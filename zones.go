@@ -14,6 +14,7 @@ type Zone struct {
 }
 
 type zoneData struct {
+	ID      string   `yaml:"id"`
 	Name    string   `yaml:"name"`
 	Records []Record `yaml:"records"`
 }
@@ -44,6 +45,7 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 
+	z.ID = data.ID
 	z.Name = data.Name
 	z.Records = make(map[string]*Record, len(data.Records))
 

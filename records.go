@@ -480,32 +480,32 @@ func (r Record) ToCloudflare() (any, error) {
 	return nil, fmt.Errorf("unsupported record type: %q", r.Type)
 }
 
-func FormatRecordResponse(resp dns.RecordResponse) string {
+func FormatRecordResponse(resp dns.RecordResponse) (string, error) {
 	switch u := resp.AsUnion().(type) {
 	case dns.RecordResponseA:
-		return u.Content
+		return u.Content, nil
 	case dns.RecordResponseAAAA:
-		return u.Content
+		return u.Content, nil
 	case dns.RecordResponseCNAME:
-		return u.Content
+		return u.Content, nil
 	case dns.RecordResponseMX:
-		return fmt.Sprintf("%.0f %s", u.Priority, u.Content)
+		return fmt.Sprintf("%.0f %s", u.Priority, u.Content), nil
 	case dns.RecordResponseNS:
-		return u.Content
+		return u.Content, nil
 	case dns.RecordResponseOpenpgpkey:
-		return u.Content
+		return u.Content, nil
 	case dns.RecordResponsePTR:
-		return u.Content
+		return u.Content, nil
 	case dns.RecordResponseTXT:
-		return formatTXT(u.Content)
+		return formatTXT(u.Content), nil
 	case dns.RecordResponseCAA:
-		return fmt.Sprintf("%.0f %s %q", u.Data.Flags, u.Data.Tag, u.Data.Value)
+		return fmt.Sprintf("%.0f %s %q", u.Data.Flags, u.Data.Tag, u.Data.Value), nil
 	case dns.RecordResponseCERT:
-		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Type, u.Data.KeyTag, u.Data.Algorithm, u.Data.Certificate)
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Type, u.Data.KeyTag, u.Data.Algorithm, u.Data.Certificate), nil
 	case dns.RecordResponseDNSKEY:
-		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Flags, u.Data.Protocol, u.Data.Algorithm, u.Data.PublicKey)
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Flags, u.Data.Protocol, u.Data.Algorithm, u.Data.PublicKey), nil
 	case dns.RecordResponseDS:
-		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.KeyTag, u.Data.Algorithm, u.Data.DigestType, u.Data.Digest)
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.KeyTag, u.Data.Algorithm, u.Data.DigestType, u.Data.Digest), nil
 	case dns.RecordResponseHTTPS:
 		target := u.Data.Target
 		if target == "" {
@@ -513,20 +513,20 @@ func FormatRecordResponse(resp dns.RecordResponse) string {
 		}
 
 		if u.Data.Value != "" {
-			return fmt.Sprintf("%.0f %s %s", u.Data.Priority, target, u.Data.Value)
+			return fmt.Sprintf("%.0f %s %s", u.Data.Priority, target, u.Data.Value), nil
 		}
 
-		return fmt.Sprintf("%.0f %s", u.Data.Priority, target)
+		return fmt.Sprintf("%.0f %s", u.Data.Priority, target), nil
 	case dns.RecordResponseLOC:
-		return u.Content
+		return u.Content, nil
 	case dns.RecordResponseNAPTR:
-		return fmt.Sprintf("%.0f %.0f %q %q %q %s", u.Data.Order, u.Data.Preference, u.Data.Flags, u.Data.Service, u.Data.Regex, u.Data.Replacement)
+		return fmt.Sprintf("%.0f %.0f %q %q %q %s", u.Data.Order, u.Data.Preference, u.Data.Flags, u.Data.Service, u.Data.Regex, u.Data.Replacement), nil
 	case dns.RecordResponseSMIMEA:
-		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate)
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate), nil
 	case dns.RecordResponseSRV:
-		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Priority, u.Data.Weight, u.Data.Port, u.Data.Target)
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Priority, u.Data.Weight, u.Data.Port, u.Data.Target), nil
 	case dns.RecordResponseSSHFP:
-		return fmt.Sprintf("%.0f %.0f %s", u.Data.Algorithm, u.Data.Type, u.Data.Fingerprint)
+		return fmt.Sprintf("%.0f %.0f %s", u.Data.Algorithm, u.Data.Type, u.Data.Fingerprint), nil
 	case dns.RecordResponseSVCB:
 		target := u.Data.Target
 		if target == "" {
@@ -534,17 +534,17 @@ func FormatRecordResponse(resp dns.RecordResponse) string {
 		}
 
 		if u.Data.Value != "" {
-			return fmt.Sprintf("%.0f %s %s", u.Data.Priority, target, u.Data.Value)
+			return fmt.Sprintf("%.0f %s %s", u.Data.Priority, target, u.Data.Value), nil
 		}
 
-		return fmt.Sprintf("%.0f %s", u.Data.Priority, target)
+		return fmt.Sprintf("%.0f %s", u.Data.Priority, target), nil
 	case dns.RecordResponseTLSA:
-		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate)
+		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate), nil
 	case dns.RecordResponseURI:
-		return fmt.Sprintf("%.0f %.0f %q", u.Priority, u.Data.Weight, u.Data.Target)
+		return fmt.Sprintf("%.0f %.0f %q", u.Priority, u.Data.Weight, u.Data.Target), nil
 	}
 
-	return resp.Content
+	return "", fmt.Errorf("unknown record type %q", resp.Type)
 }
 
 func formatTXT(content string) string {

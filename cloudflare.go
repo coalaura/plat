@@ -40,8 +40,9 @@ func (c *CloudflareClient) ListZones(ctx context.Context) ([]*Zone, error) {
 
 		for _, result := range results.Result {
 			list = append(list, &Zone{
-				ID:   result.ID,
-				Name: result.Name,
+				ID:      result.ID,
+				Name:    result.Name,
+				Records: make(map[string]*Record),
 			})
 		}
 
@@ -70,11 +71,16 @@ func (c *CloudflareClient) GetRecords(ctx context.Context, zoneId string) ([]*Re
 		}
 
 		for _, result := range results.Result {
+			value, err := FormatRecordResponse(result)
+			if err != nil {
+				return nil, err
+			}
+
 			list = append(list, &Record{
 				ID:    result.ID,
 				Type:  string(result.Type),
 				Name:  result.Name,
-				Value: result.Content,
+				Value: value,
 				TTL:   int64(result.TTL),
 			})
 		}

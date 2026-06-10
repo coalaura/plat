@@ -128,12 +128,12 @@ func resolveZone(r *http.Request) (string, error) {
 		return "", errors.New("missing zone")
 	}
 
-	if len(zone) < 2 || zone[len(zone)-1] != '.' {
+	if len(zone) != 32 {
 		return "", errors.New("invalid zone")
 	}
 
 	for _, r := range zone {
-		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '.' {
+		if (r < 'a' || r > 'f') && (r < '0' || r > '9') {
 			return "", errors.New("invalid zone")
 		}
 	}
