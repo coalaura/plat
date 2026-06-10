@@ -54,6 +54,13 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 
 func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			abort(w, http.StatusInternalServerError, "unable to flush")
+
+			return
+		}
+
 		zones := storage.GetZones()
 
 		var (
@@ -62,7 +69,7 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 		)
 
 		for zone := range zones {
-			flushPart(w, map[string]any{
+			writeNDJson(w, flusher, map[string]any{
 				"zone":  zone,
 				"index": index,
 				"total": total,
@@ -76,7 +83,7 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 			}
 		}
 
-		json.NewEncoder(w).Encode(map[string]bool{
+		writeNDJson(w, flusher, map[string]bool{
 			"completed": true,
 		})
 	}
