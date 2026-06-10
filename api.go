@@ -41,7 +41,7 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 			return
 		}
 
-		err = storage.FetchRecords(zone, false)
+		err = storage.FetchRecords(zone)
 		if err != nil {
 			abort(w, http.StatusNotFound, err.Error())
 

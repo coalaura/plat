@@ -923,19 +923,13 @@ function createHeader() {
 	controls.append(theme);
 
 	if (state.authenticated) {
-		const auth = make("div", "auth-chip"),
-			text = make("span", "mono"),
-			logout = make("button", "ghost");
-
-		text.textContent = "Token active";
+		const logout = make("button", "ghost", "danger");
 
 		logout.type = "button";
 		logout.textContent = "Log out";
 		logout.addEventListener("click", onLogoutClick);
 
-		auth.append(text, logout);
-
-		controls.append(auth);
+		controls.append(logout);
 	}
 
 	head.append(controls);

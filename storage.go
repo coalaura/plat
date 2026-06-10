@@ -173,13 +173,18 @@ func (s *Storage) FetchZones() error {
 	}
 
 	for _, zone := range zones {
-		s.zones[zone.ID] = zone
+		exists, ok := s.zones[zone.ID]
+		if ok {
+			exists.Name = zone.Name
+		} else {
+			s.zones[zone.ID] = zone
+		}
 	}
 
 	return nil
 }
 
-func (s *Storage) FetchRecords(zoneId string, override bool) error {
+func (s *Storage) FetchRecords(zoneId string) error {
 	s.mx.RLock()
 
 	zone, exists := s.zones[zoneId]
@@ -200,12 +205,6 @@ func (s *Storage) FetchRecords(zoneId string, override bool) error {
 	}
 
 	for _, record := range records {
-		if !override {
-			if _, exists := zone.Records[record.ID]; exists {
-				continue
-			}
-		}
-
 		zone.Records[record.ID] = record
 	}
 
