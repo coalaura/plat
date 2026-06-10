@@ -34,18 +34,18 @@ const state = {
 	activeZone: "",
 	records: [],
 	loading: false,
-	message: "",
-	error: "",
 };
 
 const ui = {
 	mounted: false,
 	headerSlot: null,
-	statusSlot: null,
 	contentSlot: null,
 	zonesSlot: null,
 	recordsSlot: null,
 	recordsScrollByZone: {},
+	notificationItems: new Map(),
+	notificationTimers: new Map(),
+	notificationRoot: null,
 };
 
 function make(tag, ...classes) {
@@ -450,10 +450,100 @@ function setZoneHash(zone) {
 }
 
 function setStatus(message, isError) {
-	state.message = isError ? "" : message;
-	state.error = isError ? message : "";
+	if (!message) {
+		return;
+	}
 
-	renderStatus();
+	const notification = createNotification({
+		id: randomId(),
+		text: String(message),
+		type: isError ? "error" : "ok",
+	});
+
+	ui.notificationRoot.append(notification.element);
+	ui.notificationItems.set(notification.id, notification.element);
+
+	const timeout = window.setTimeout(
+		() => dismissNotification(notification.id),
+		isError ? 7000 : 4500
+	);
+
+	ui.notificationTimers.set(notification.id, timeout);
+}
+
+function ensureNotificationRoot() {
+	if (ui.notificationRoot) {
+		return;
+	}
+
+	const root = make("div", "notifications");
+
+	root.setAttribute("aria-live", "polite");
+	root.setAttribute("aria-atomic", "false");
+
+	document.body.append(root);
+
+	ui.notificationRoot = root;
+}
+
+function createNotification(notification) {
+	ensureNotificationRoot();
+
+	const item = make("div", "notification", notification.type),
+		text = make("p", "notification-text"),
+		dismiss = make("button", "notification-dismiss");
+
+	text.textContent = notification.text;
+
+	dismiss.type = "button";
+	dismiss.textContent = "Dismiss";
+	dismiss.addEventListener("click", () => dismissNotification(notification.id));
+
+	item.append(text, dismiss);
+
+	return {
+		id: notification.id,
+		element: item,
+	};
+}
+
+function dismissNotification(id) {
+	const timeout = ui.notificationTimers.get(id);
+
+	if (timeout) {
+		clearTimeout(timeout);
+
+		ui.notificationTimers.delete(id);
+	}
+
+	const item = ui.notificationItems.get(id);
+
+	if (!item) {
+		return;
+	}
+
+	item.remove();
+
+	ui.notificationItems.delete(id);
+}
+
+function clearNotifications() {
+	for (const timeout of ui.notificationTimers.values()) {
+		clearTimeout(timeout);
+	}
+
+	ui.notificationTimers.clear();
+
+	for (const item of ui.notificationItems.values()) {
+		item.remove();
+	}
+
+	ui.notificationItems.clear();
+
+	if (ui.notificationRoot) {
+		ui.notificationRoot.remove();
+		ui.notificationRoot = null;
+	}
 }
 
 function applyTheme() {
@@ -565,20 +655,15 @@ async function loadZone(zone) {
 		const records = await api(`/-/${encodeURIComponent(zone)}`);
 
 		state.records = Array.isArray(records) ? records : [];
-
-		state.message = "";
-		state.error = "";
-
-		renderStatus();
 	} catch (err) {
 		state.records = [];
-		state.error = err.message;
 
-		renderStatus();
+		setStatus(err.message, true);
 	} finally {
 		state.loading = false;
 
 		renderRecords();
+
 		setActiveZoneSelection(zoneChanged);
 	}
 }
@@ -963,22 +1048,6 @@ function createHeader() {
 	return head;
 }
 
-function createStatus() {
-	const status = make("div", "status");
-
-	if (!state.message && !state.error) {
-		status.classList.add("idle");
-		status.textContent = "Ready";
-
-		return status;
-	}
-
-	status.classList.add(state.error ? "error" : "ok");
-	status.textContent = state.error || state.message;
-
-	return status;
-}
-
 function createLogin() {
 	const panel = make("section", "panel", "login"),
 		title = make("h2", "panel-title"),
@@ -1051,19 +1120,18 @@ function setActiveZoneSelection(ensureVisible = false) {
 		return;
 	}
 
-	let activeButton = null;
+	const current = ui.zonesSlot.querySelector(".zone-item.active"),
+		next = ui.zonesSlot.querySelector(`.zone-item[data-zone-id="${state.activeZone}"]`);
 
-	for (const button of ui.zonesSlot.querySelectorAll(".zone-item")) {
-		const isActive = button.dataset.zoneId === state.activeZone;
-
-		button.classList.toggle("active", isActive);
-
-		if (isActive) {
-			activeButton = button;
-		}
+	if (current && current !== next) {
+		current.classList.remove("active");
 	}
 
-	if (ensureVisible && activeButton) {
+	if (next && !next.classList.contains("active")) {
+		next.classList.add("active");
+	}
+
+	if (ensureVisible && next) {
 		updateActiveZoneScroll();
 	}
 }
@@ -1296,10 +1364,9 @@ function mountShell() {
 	const shell = make("main", "shell");
 
 	ui.headerSlot = make("div", "header-slot");
-	ui.statusSlot = make("div", "status-slot");
 	ui.contentSlot = make("div", "content-slot");
 
-	shell.append(ui.headerSlot, ui.statusSlot, ui.contentSlot);
+	shell.append(ui.headerSlot, ui.contentSlot);
 
 	app.append(shell);
 
@@ -1333,14 +1400,6 @@ function renderHeader() {
 	}
 
 	ui.headerSlot.replaceChildren(createHeader());
-}
-
-function renderStatus() {
-	if (!ui.mounted) {
-		return;
-	}
-
-	ui.statusSlot.replaceChildren(createStatus());
 }
 
 function renderZones() {
@@ -1401,7 +1460,6 @@ function render() {
 	applyTheme();
 	mountShell();
 	renderHeader();
-	renderStatus();
 	renderContent();
 }
 
@@ -1450,10 +1508,9 @@ function onLogoutClick() {
 	state.zones = {};
 	state.activeZone = "";
 	state.records = [];
-	state.message = "";
-	state.error = "";
 
 	sessionStorage.removeItem("plat-token");
+	clearNotifications();
 
 	setZoneHash("");
 
