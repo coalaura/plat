@@ -85,6 +85,8 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 
 				return
 			}
+
+			index++
 		}
 
 		writeNDJson(w, flusher, map[string]string{
