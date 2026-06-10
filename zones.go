@@ -58,6 +58,7 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 
 func (z *Zone) MarshalYAML() (any, error) {
 	return zoneData{
+		ID:      z.ID,
 		Name:    z.Name,
 		Records: z.RecordsList(),
 	}, nil

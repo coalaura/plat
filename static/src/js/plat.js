@@ -33,7 +33,10 @@ const state = {
 	zones: {},
 	activeZone: "",
 	records: [],
-	loading: false,
+	loadingRecords: false,
+	syncingRecords: false,
+	savingRecord: false,
+	reloadingZones: false,
 };
 
 const ui = {
@@ -637,6 +640,10 @@ async function loadZone(zone) {
 		return;
 	}
 
+	if (state.loadingRecords && state.activeZone === zone) {
+		return;
+	}
+
 	const zoneChanged = state.activeZone !== zone;
 
 	state.activeZone = zone;
@@ -647,7 +654,7 @@ async function loadZone(zone) {
 
 	setActiveZoneSelection(zoneChanged);
 
-	state.loading = true;
+	state.loadingRecords = true;
 
 	renderRecords();
 
@@ -660,7 +667,7 @@ async function loadZone(zone) {
 
 		setStatus(err.message, true);
 	} finally {
-		state.loading = false;
+		state.loadingRecords = false;
 
 		renderRecords();
 
@@ -673,7 +680,11 @@ async function refreshZoneFromCloudflare() {
 		return;
 	}
 
-	state.loading = true;
+	if (state.syncingRecords || state.loadingRecords || state.savingRecord) {
+		return;
+	}
+
+	state.syncingRecords = true;
 
 	renderRecords();
 
@@ -688,21 +699,35 @@ async function refreshZoneFromCloudflare() {
 	} catch (err) {
 		setStatus(err.message, true);
 	} finally {
-		state.loading = false;
+		state.syncingRecords = false;
 
 		renderRecords();
 	}
 }
 
 async function saveRecord(record, isUpdate) {
-	await api(`/-/${encodeURIComponent(state.activeZone)}`, {
-		method: isUpdate ? "PUT" : "POST",
-		body: JSON.stringify(record),
-	});
+	if (state.savingRecord) {
+		throw new Error("A record save is already in progress.");
+	}
 
-	setStatus(isUpdate ? "Record updated." : "Record created.", false);
+	state.savingRecord = true;
 
-	await loadZone(state.activeZone);
+	renderRecords();
+
+	try {
+		await api(`/-/${encodeURIComponent(state.activeZone)}`, {
+			method: isUpdate ? "PUT" : "POST",
+			body: JSON.stringify(record),
+		});
+
+		setStatus(isUpdate ? "Record updated." : "Record created.", false);
+
+		await loadZone(state.activeZone);
+	} finally {
+		state.savingRecord = false;
+
+		renderRecords();
+	}
 }
 
 async function deleteRecord(record) {
@@ -915,9 +940,21 @@ function openRecordModal(currentRecord) {
 
 	document.body.append(overlay);
 
-	const close = () => overlay.remove();
+	const close = () => overlay.remove(),
+		submitIdleText = currentRecord ? "Save" : "Create";
 
-	let typedCache = parseRecordValue(typeInput.value, rawInput.value);
+	let typedCache = parseRecordValue(typeInput.value, rawInput.value),
+		submitting = false;
+
+	const setSubmitting = value => {
+		submitting = value;
+
+		for (const field of form.querySelectorAll("input, select, textarea, button")) {
+			field.disabled = value;
+		}
+
+		submitButton.textContent = value ? "Saving..." : submitIdleText;
+	};
 
 	const collectTypedFields = () => {
 		const config = recordTypeConfig(typeInput.value),
@@ -993,6 +1030,10 @@ function openRecordModal(currentRecord) {
 	form.addEventListener("submit", async event => {
 		event.preventDefault();
 
+		if (submitting || state.savingRecord) {
+			return;
+		}
+
 		try {
 			if (modeSelect.value === "raw") {
 				syncTypedFromRaw();
@@ -1002,11 +1043,14 @@ function openRecordModal(currentRecord) {
 
 			const record = parseFormRecord(new FormData(form), currentRecord);
 
+			setSubmitting(true);
+
 			await saveRecord(record, Boolean(currentRecord));
 
 			close();
 		} catch (err) {
 			setStatus(err.message, true);
+			setSubmitting(false);
 		}
 	});
 
@@ -1093,7 +1137,8 @@ function createZones() {
 	title.textContent = "Zones";
 
 	refresh.type = "button";
-	refresh.textContent = "Reload";
+	refresh.textContent = state.reloadingZones ? "Reloading..." : "Reload";
+	refresh.disabled = state.reloadingZones;
 	refresh.addEventListener("click", onReloadInfoClick);
 
 	top.append(title, refresh);
@@ -1104,6 +1149,7 @@ function createZones() {
 		const button = make("button", "zone-item", zoneId === state.activeZone ? "active" : "");
 
 		button.type = "button";
+		button.disabled = state.loadingRecords || state.syncingRecords || state.savingRecord;
 		button.dataset.zoneId = zoneId;
 		button.textContent = zoneDisplay(zoneName);
 		button.title = `${zoneDisplay(zoneName)} (${zoneId})`;
@@ -1258,16 +1304,18 @@ function createRecords() {
 		head = make("thead"),
 		body = make("tbody");
 
+	const recordsBusy = state.loadingRecords || state.syncingRecords || state.savingRecord;
+
 	title.textContent = state.activeZone ? `${zoneDisplay(activeZoneName())} records` : "Records";
 
 	sync.type = "button";
-	sync.textContent = "Sync from Cloudflare";
+	sync.textContent = state.syncingRecords ? "Synchronizing..." : state.loadingRecords ? "Loading..." : "Sync from Cloudflare";
 
 	add.type = "button";
-	add.textContent = "New record";
+	add.textContent = state.savingRecord ? "Saving..." : "New record";
 
-	sync.disabled = !state.activeZone || state.loading;
-	add.disabled = !state.activeZone || state.loading;
+	sync.disabled = !state.activeZone || recordsBusy;
+	add.disabled = !state.activeZone || recordsBusy;
 
 	sync.addEventListener("click", onSyncClick);
 	add.addEventListener("click", onNewRecordClick);
@@ -1311,7 +1359,7 @@ function createRecords() {
 	if (!state.records.length) {
 		const empty = make("p", "empty");
 
-		empty.textContent = state.loading ? "Loading records..." : "No records in this zone yet.";
+		empty.textContent = state.loadingRecords ? "Loading records..." : state.syncingRecords ? "Synchronizing records..." : "No records in this zone yet.";
 
 		panel.append(empty);
 
@@ -1335,9 +1383,11 @@ function createRecords() {
 
 		edit.type = "button";
 		edit.textContent = "Edit";
+		edit.disabled = recordsBusy;
 
 		del.type = "button";
 		del.textContent = "Delete";
+		del.disabled = recordsBusy;
 
 		edit.addEventListener("click", () => onEditRecordClick(record));
 		del.addEventListener("click", () => onDeleteRecordClick(record));
@@ -1508,6 +1558,10 @@ function onLogoutClick() {
 	state.zones = {};
 	state.activeZone = "";
 	state.records = [];
+	state.loadingRecords = false;
+	state.syncingRecords = false;
+	state.savingRecord = false;
+	state.reloadingZones = false;
 
 	sessionStorage.removeItem("plat-token");
 	clearNotifications();
@@ -1518,12 +1572,24 @@ function onLogoutClick() {
 }
 
 async function onReloadInfoClick() {
+	if (state.reloadingZones) {
+		return;
+	}
+
+	state.reloadingZones = true;
+
+	renderZones();
+
 	try {
 		await checkInfo();
 
 		setStatus("Zone list updated.", false);
 	} catch (err) {
 		setStatus(err.message, true);
+	} finally {
+		state.reloadingZones = false;
+
+		renderZones();
 	}
 }
 
