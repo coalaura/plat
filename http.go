@@ -25,3 +25,16 @@ func okay(w http.ResponseWriter, data any) {
 		json.NewEncoder(w).Encode(data)
 	}
 }
+
+func flushPart(w http.ResponseWriter, data any) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return
+	}
+
+	json.NewEncoder(w).Encode(data)
+
+	w.Write([]byte("\n"))
+
+	flusher.Flush()
+}

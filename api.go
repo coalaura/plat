@@ -43,12 +43,42 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 
 		err = storage.FetchRecords(zone)
 		if err != nil {
-			abort(w, http.StatusNotFound, err.Error())
+			abort(w, http.StatusInternalServerError, err.Error())
 
 			return
 		}
 
 		DoListRecords(storage, w, zone)
+	}
+}
+
+func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		zones := storage.GetZones()
+
+		var (
+			index = 1
+			total = len(zones)
+		)
+
+		for zone := range zones {
+			flushPart(w, map[string]any{
+				"zone":  zone,
+				"index": index,
+				"total": total,
+			})
+
+			err := storage.FetchRecords(zone)
+			if err != nil {
+				abort(w, http.StatusInternalServerError, err.Error())
+
+				return
+			}
+		}
+
+		json.NewEncoder(w).Encode(map[string]bool{
+			"completed": true,
+		})
 	}
 }
 
