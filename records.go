@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/cloudflare/cloudflare-go/v7"
 	"github.com/cloudflare/cloudflare-go/v7/dns"
@@ -29,6 +28,16 @@ func (r Record) FullName(zoneName string) string {
 }
 
 func (r Record) ToCloudflareNew() (dns.RecordNewParamsBodyUnion, error) {
+	// OPENPGPKEY is missing a regular RecordParam
+	if strings.EqualFold(r.Type, "OPENPGPKEY") {
+		return dns.RecordNewParamsBody{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.RecordNewParamsBodyTypeOpenpgpkey),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	}
+
 	param, err := r.ToCloudflare()
 	if err != nil {
 		return nil, err
@@ -38,6 +47,16 @@ func (r Record) ToCloudflareNew() (dns.RecordNewParamsBodyUnion, error) {
 }
 
 func (r Record) ToCloudflareEdit() (dns.RecordEditParamsBodyUnion, error) {
+	// OPENPGPKEY is missing a regular RecordParam
+	if strings.EqualFold(r.Type, "OPENPGPKEY") {
+		return dns.RecordEditParamsBody{
+			Name:    cloudflare.F(r.Name),
+			TTL:     cloudflare.F(dns.TTL(r.TTL)),
+			Type:    cloudflare.F(dns.RecordEditParamsBodyTypeOpenpgpkey),
+			Content: cloudflare.F(r.Value),
+		}, nil
+	}
+
 	param, err := r.ToCloudflare()
 	if err != nil {
 		return nil, err
@@ -103,16 +122,13 @@ func (r Record) ToCloudflare() (any, error) {
 			Content: cloudflare.F(r.Value),
 		}, nil
 	case "TXT":
-		txtContent := r.Value
-		if len(txtContent) >= 2 && txtContent[0] == '"' && txtContent[len(txtContent)-1] == '"' {
-			txtContent = txtContent[1 : len(txtContent)-1]
-		}
+		text := formatTXT(r.Value)
 
 		return dns.TXTRecordParam{
 			Name:    cloudflare.F(r.Name),
 			TTL:     cloudflare.F(dns.TTL(r.TTL)),
 			Type:    cloudflare.F(dns.TXTRecordTypeTXT),
-			Content: cloudflare.F(txtContent),
+			Content: cloudflare.F(text),
 		}, nil
 	case "CAA":
 		if len(fields) < 3 {
@@ -254,11 +270,16 @@ func (r Record) ToCloudflare() (any, error) {
 			}),
 		}, nil
 	case "LOC":
-		return dns.RecordEditParamsBody{
-			Name:    cloudflare.F(r.Name),
-			TTL:     cloudflare.F(dns.TTL(r.TTL)),
-			Type:    cloudflare.F(dns.RecordEditParamsBodyTypeLOC),
-			Content: cloudflare.F(r.Value),
+		data, err := parseLOC(r.Value)
+		if err != nil {
+			return nil, err
+		}
+
+		return dns.LOCRecordParam{
+			Name: cloudflare.F(r.Name),
+			TTL:  cloudflare.F(dns.TTL(r.TTL)),
+			Type: cloudflare.F(dns.LOCRecordTypeLOC),
+			Data: cloudflare.F(data),
 		}, nil
 	case "NAPTR":
 		if len(fields) < 6 {
@@ -457,13 +478,6 @@ func (r Record) ToCloudflare() (any, error) {
 				Target: cloudflare.F(fields[2]),
 			}),
 		}, nil
-	case "OPENPGPKEY":
-		return dns.RecordEditParamsBodyDNSRecordsOpenpgpkeyRecord{
-			Name:    cloudflare.F(r.Name),
-			TTL:     cloudflare.F(dns.TTL(r.TTL)),
-			Type:    cloudflare.F(dns.RecordEditParamsBodyDNSRecordsOpenpgpkeyRecordTypeOpenpgpkey),
-			Content: cloudflare.F(r.Value),
-		}, nil
 	}
 
 	return nil, fmt.Errorf("unsupported record type: %q", r.Type)
@@ -536,12 +550,9 @@ func FormatRecordResponse(resp dns.RecordResponse) (string, error) {
 	return "", fmt.Errorf("unknown record type %q", resp.Type)
 }
 
+// formatTXT ensures the content is always correctly quoted
 func formatTXT(content string) string {
-	if len(content) >= 2 && content[0] == '"' && content[len(content)-1] == '"' {
-		return content
-	}
-
-	return fmt.Sprintf("%q", content)
+	return encodeTXT(decodeTXT(content))
 }
 
 func parseFields(s string) []string {
@@ -575,7 +586,7 @@ func parseFields(s string) []string {
 			continue
 		}
 
-		if unicode.IsSpace(rune(r)) && !inQuotes {
+		if (r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\v' || r == '\f') && !inQuotes {
 			if current.Len() > 0 {
 				fields = append(fields, current.String())
 
@@ -591,4 +602,195 @@ func parseFields(s string) []string {
 	}
 
 	return fields
+}
+
+func decodeTXT(s string) string {
+	s = strings.TrimSpace(s)
+
+	if !strings.HasPrefix(s, "\"") {
+		return s // unquoted raw value
+	}
+
+	var (
+		b        strings.Builder
+		inQuotes bool
+		escaped  bool
+	)
+
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+
+		if escaped {
+			b.WriteByte(c)
+
+			escaped = false
+
+			continue
+		}
+
+		switch {
+		case inQuotes && c == '\\':
+			escaped = true
+		case c == '"':
+			inQuotes = !inQuotes
+		case inQuotes:
+			b.WriteByte(c)
+		}
+
+		// bytes between quoted segments (spaces) are ignored
+	}
+
+	return b.String()
+}
+
+// encodeTXT renders raw payload bytes as one or more quoted character-strings,
+// each at most 255 bytes, per RFC 1035 §3.3.14.
+func encodeTXT(raw string) string {
+	if raw == "" {
+		return `""`
+	}
+
+	var parts []string
+
+	for len(raw) > 0 {
+		n := min(len(raw), 255)
+
+		chunk := raw[:n]
+		raw = raw[n:]
+
+		var b strings.Builder
+
+		b.WriteByte('"')
+
+		for i := 0; i < len(chunk); i++ {
+			c := chunk[i]
+
+			if c == '"' || c == '\\' {
+				b.WriteByte('\\')
+			}
+
+			b.WriteByte(c)
+		}
+
+		b.WriteByte('"')
+
+		parts = append(parts, b.String())
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func parseLOC(value string) (dns.LOCRecordDataParam, error) {
+	fields := strings.Fields(value)
+	if len(fields) < 5 {
+		return dns.LOCRecordDataParam{}, fmt.Errorf("invalid LOC record value: %q (expected <lat> <N|S> <long> <E|W> <alt> [size hp vp])", value)
+	}
+
+	var pos int
+
+	readCoord := func(a, b string) (deg, min, sec float64, dir string, err error) {
+		var nums []float64
+
+		for pos < len(fields) {
+			tok := strings.ToUpper(fields[pos])
+
+			if tok == a || tok == b {
+				dir = tok
+
+				pos++
+
+				break
+			}
+
+			n, e := strconv.ParseFloat(fields[pos], 64)
+			if e != nil {
+				return 0, 0, 0, "", fmt.Errorf("invalid LOC number %q: %w", fields[pos], e)
+			}
+
+			nums = append(nums, n)
+			pos++
+		}
+
+		if dir == "" {
+			return 0, 0, 0, "", fmt.Errorf("missing LOC direction (expected %s or %s)", a, b)
+		}
+
+		if len(nums) > 0 {
+			deg = nums[0]
+		}
+
+		if len(nums) > 1 {
+			min = nums[1]
+		}
+
+		if len(nums) > 2 {
+			sec = nums[2]
+		}
+
+		return deg, min, sec, dir, nil
+	}
+
+	latDeg, latMin, latSec, latDir, err := readCoord("N", "S")
+	if err != nil {
+		return dns.LOCRecordDataParam{}, err
+	}
+
+	longDeg, longMin, longSec, longDir, err := readCoord("E", "W")
+	if err != nil {
+		return dns.LOCRecordDataParam{}, err
+	}
+
+	// altitude (required) + optional size/hp/vp, each may carry a trailing 'm'
+	readMeters := func(def float64) (float64, error) {
+		if pos >= len(fields) {
+			return def, nil
+		}
+
+		tok := strings.TrimSuffix(strings.ToLower(fields[pos]), "m")
+
+		n, e := strconv.ParseFloat(tok, 64)
+		if e != nil {
+			return 0, fmt.Errorf("invalid LOC measurement %q: %w", fields[pos], e)
+		}
+
+		pos++
+
+		return n, nil
+	}
+
+	alt, err := readMeters(0)
+	if err != nil {
+		return dns.LOCRecordDataParam{}, err
+	}
+
+	// RFC 1876 defaults: size 1m, horiz 10000m, vert 10m
+	size, err := readMeters(1)
+	if err != nil {
+		return dns.LOCRecordDataParam{}, err
+	}
+
+	hp, err := readMeters(10000)
+	if err != nil {
+		return dns.LOCRecordDataParam{}, err
+	}
+
+	vp, err := readMeters(10)
+	if err != nil {
+		return dns.LOCRecordDataParam{}, err
+	}
+
+	return dns.LOCRecordDataParam{
+		LatDegrees:    cloudflare.F(latDeg),
+		LatMinutes:    cloudflare.F(latMin),
+		LatSeconds:    cloudflare.F(latSec),
+		LatDirection:  cloudflare.F(dns.LOCRecordDataLatDirection(latDir)),
+		LongDegrees:   cloudflare.F(longDeg),
+		LongMinutes:   cloudflare.F(longMin),
+		LongSeconds:   cloudflare.F(longSec),
+		LongDirection: cloudflare.F(dns.LOCRecordDataLongDirection(longDir)),
+		Altitude:      cloudflare.F(alt),
+		Size:          cloudflare.F(size),
+		PrecisionHorz: cloudflare.F(hp),
+		PrecisionVert: cloudflare.F(vp),
+	}, nil
 }
