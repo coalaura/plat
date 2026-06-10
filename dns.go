@@ -54,6 +54,10 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	msg.Authoritative = true
 
+	if s.fallback != "" {
+		msg.RecursionAvailable = true
+	}
+
 	if len(r.Question) == 0 {
 		w.WriteMsg(&msg)
 
