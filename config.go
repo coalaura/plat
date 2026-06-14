@@ -19,9 +19,10 @@ type ConfigCloudflare struct {
 }
 
 type ConfigDNS struct {
-	Enabled  bool   `yaml:"enabled"`
-	Port     int    `yaml:"port"`
-	Fallback string `yaml:"fallback"`
+	Enabled       bool   `yaml:"enabled"`
+	Port          int    `yaml:"port"`
+	FallbackIP    string `yaml:"fallback_ip"`
+	FallbackHTTPS string `yaml:"fallback_https"`
 }
 
 type Config struct {
@@ -39,9 +40,10 @@ func NewDefaultConfig() Config {
 			Token: "p4$$w0rd",
 		},
 		DNS: ConfigDNS{
-			Enabled:  true,
-			Port:     531,
-			Fallback: "9.9.9.9",
+			Enabled:       true,
+			Port:          531,
+			FallbackIP:    "9.9.9.9",
+			FallbackHTTPS: "https://dns.quad9.net/dns-query",
 		},
 	}
 }
@@ -99,15 +101,15 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("dns.port must be 1-65535, got %d", c.DNS.Port)
 		}
 
-		if c.DNS.Fallback != "" {
-			host, portStr, err := net.SplitHostPort(c.DNS.Fallback)
+		if c.DNS.FallbackIP != "" {
+			host, portStr, err := net.SplitHostPort(c.DNS.FallbackIP)
 			if err != nil {
-				ip := net.ParseIP(c.DNS.Fallback)
+				ip := net.ParseIP(c.DNS.FallbackIP)
 				if ip == nil {
-					return fmt.Errorf("dns.fallback %q is not a valid IP address", c.DNS.Fallback)
+					return fmt.Errorf("dns.fallback %q is not a valid IP address", c.DNS.FallbackIP)
 				}
 
-				c.DNS.Fallback = net.JoinHostPort(c.DNS.Fallback, "53")
+				c.DNS.FallbackIP = net.JoinHostPort(c.DNS.FallbackIP, "53")
 			} else {
 				ip := net.ParseIP(host)
 				if ip == nil {
@@ -142,9 +144,10 @@ func (e *Config) Store() error {
 		"$.cloudflare":       {yaml.FootComment()},
 		"$.cloudflare.token": {yaml.HeadComment(fmt.Sprintf(" cloudflare api token (default: %q)", def.Cloudflare.Token))},
 
-		"$.dns.enabled":  {yaml.HeadComment(fmt.Sprintf(" enable built-in dns server (default: %v)", def.DNS.Enabled))},
-		"$.dns.port":     {yaml.HeadComment(fmt.Sprintf(" dns server port (default: %v)", def.DNS.Port))},
-		"$.dns.fallback": {yaml.HeadComment(fmt.Sprintf(" optional fallback resolver for unknown queries (default: %q)", def.DNS.Fallback))},
+		"$.dns.enabled":        {yaml.HeadComment(fmt.Sprintf(" enable built-in dns server (default: %v)", def.DNS.Enabled))},
+		"$.dns.port":           {yaml.HeadComment(fmt.Sprintf(" dns server port (default: %v)", def.DNS.Port))},
+		"$.dns.fallback_ip":    {yaml.HeadComment(fmt.Sprintf(" optional ip fallback resolver for unknown queries (default: %q)", def.DNS.FallbackIP))},
+		"$.dns.fallback_https": {yaml.HeadComment(fmt.Sprintf(" optional DoH (DNS-over-HTTPS) fallback resolver (default: %q)", def.DNS.FallbackHTTPS))},
 	}
 
 	file, err := OpenFileForWriting("config.yml")

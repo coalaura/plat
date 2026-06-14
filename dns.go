@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -15,15 +18,39 @@ type DNSServer struct {
 	udp *dns.Server
 	tcp *dns.Server
 
-	storage  *Storage
-	fallback string
+	storage *Storage
+
+	fallbackIP string
+	dnsClient  *dns.Client
+
+	fallbackHTTPS string
+	httpClient    *http.Client
 }
 
-type DOHRequest struct {
+type DoHRequest struct {
 	body []byte
 }
 
-func NewDOHRequest(r *http.Request) (*DOHRequest, error) {
+func NewDoHHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 8 * time.Second,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   4 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}).DialContext,
+			ForceAttemptHTTP2:     true,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   100,
+			IdleConnTimeout:       10 * time.Second,
+			TLSHandshakeTimeout:   4 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		},
+	}
+}
+
+func NewDoHRequest(r *http.Request) (*DoHRequest, error) {
 	var (
 		body []byte
 		err  error
@@ -56,7 +83,7 @@ func NewDOHRequest(r *http.Request) (*DOHRequest, error) {
 		return nil, nil
 	}
 
-	return &DOHRequest{
+	return &DoHRequest{
 		body: body,
 	}, nil
 }
@@ -65,8 +92,13 @@ func NewDNSServer(config *Config, storage *Storage) *DNSServer {
 	addr := fmt.Sprintf(":%d", config.DNS.Port)
 
 	server := &DNSServer{
-		storage:  storage,
-		fallback: config.DNS.Fallback,
+		storage: storage,
+
+		fallbackIP: config.DNS.FallbackIP,
+		dnsClient:  new(dns.Client),
+
+		fallbackHTTPS: config.DNS.FallbackHTTPS,
+		httpClient:    NewDoHHTTPClient(),
 	}
 
 	server.udp = &dns.Server{
@@ -89,7 +121,7 @@ func NewDNSServer(config *Config, storage *Storage) *DNSServer {
 	return server
 }
 
-func (r *DOHRequest) Unpack() (*dns.Msg, error) {
+func (r *DoHRequest) Unpack() (*dns.Msg, error) {
 	msg := new(dns.Msg)
 
 	err := msg.Unpack(r.body)
@@ -118,7 +150,7 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
 	msg.Compress = true
 	msg.Authoritative = true
 
-	if s.fallback != "" {
+	if s.fallbackIP != "" || s.fallbackHTTPS != "" {
 		msg.RecursionAvailable = true
 	}
 
@@ -145,17 +177,24 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
 		return msg
 	}
 
-	if s.fallback != "" {
-		client := new(dns.Client)
-
-		in, _, err := client.Exchange(r, s.fallback)
+	if s.fallbackHTTPS != "" {
+		in, err := s.ExchangeDoH(r)
 		if err == nil {
 			in.Id = r.Id
 
 			return in
 		}
 
-		log.Warnf("DNS fallback resolver error: %v", err)
+		log.Warnf("DNS fallback resolver (https) error: %v", err)
+	} else if s.fallbackIP != "" {
+		in, _, err := s.dnsClient.Exchange(r, s.fallbackIP)
+		if err == nil {
+			in.Id = r.Id
+
+			return in
+		}
+
+		log.Warnf("DNS fallback resolver (ip) error: %v", err)
 	}
 
 	msg.Rcode = dns.RcodeNameError
@@ -169,7 +208,7 @@ func (s *DNSServer) HandleDNSMessage(w dns.ResponseWriter, r *dns.Msg) {
 	w.WriteMsg(resp)
 }
 
-func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DOHRequest) {
+func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DoHRequest) {
 	msg, err := r.Unpack()
 	if err != nil {
 		abort(w, http.StatusBadRequest, "failed to unpack dns response")
@@ -193,4 +232,73 @@ func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DOHRequest) {
 	w.WriteHeader(http.StatusOK)
 
 	w.Write(respBytes)
+}
+
+func (s *DNSServer) ExchangeDoH(r *dns.Msg) (*dns.Msg, error) {
+	reqBytes, err := r.Pack()
+	if err != nil {
+		return nil, fmt.Errorf("failed to pack dns query: %w", err)
+	}
+
+	var resp *http.Response
+
+	for i := range 3 {
+		var req *http.Request
+
+		if len(reqBytes) <= 512 {
+			b64 := base64.RawURLEncoding.EncodeToString(reqBytes)
+
+			sep := "?"
+			if strings.Contains(s.fallbackHTTPS, "?") {
+				sep = "&"
+			}
+
+			url := s.fallbackHTTPS + sep + "dns=" + b64
+
+			req, err = http.NewRequest(http.MethodGet, url, nil)
+		} else {
+			req, err = http.NewRequest(http.MethodPost, s.fallbackHTTPS, bytes.NewReader(reqBytes))
+			req.Header.Set("Content-Type", "application/dns-message")
+		}
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DoH request: %w", err)
+		}
+
+		req.Header.Set("Accept", "application/dns-message")
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) PlatDNS/1.0")
+
+		resp, err = s.httpClient.Do(req)
+		if err == nil {
+			break
+		}
+
+		if i < 2 {
+			time.Sleep(50 * time.Millisecond)
+
+			continue
+		}
+
+		return nil, fmt.Errorf("DoH exchange failed after retry: %w", err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("DoH responder returned status: %s", resp.Status)
+	}
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read DoH response body: %w", err)
+	}
+
+	respMsg := new(dns.Msg)
+
+	err = respMsg.Unpack(respBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unpack DoH response: %w", err)
+	}
+
+	return respMsg, nil
 }

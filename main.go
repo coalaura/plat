@@ -52,7 +52,7 @@ func main() {
 	if dns != nil {
 		r.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				doh, err := NewDOHRequest(r)
+				doh, err := NewDoHRequest(r)
 				if err != nil {
 					abort(w, http.StatusBadRequest, err.Error())
 
