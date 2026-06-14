@@ -32,10 +32,12 @@ func main() {
 	err = storage.FetchZones()
 	log.MustFail(err)
 
+	var dns *DNSServer
+
 	if config.DNS.Enabled {
 		log.Println("Starting DNS server...")
 
-		dns := NewDNSServer(config, storage)
+		dns = NewDNSServer(config, storage)
 
 		defer dns.Close()
 	}
@@ -46,6 +48,27 @@ func main() {
 
 	r.Use(middleware.Recoverer)
 	r.Use(log.Middleware())
+
+	if dns != nil {
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				doh, err := NewDOHRequest(r)
+				if err != nil {
+					abort(w, http.StatusBadRequest, err.Error())
+
+					return
+				}
+
+				if doh != nil {
+					dns.HandleDoH(w, doh)
+
+					return
+				}
+
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
 
 	r.Handle("/*", frontend(config))
 

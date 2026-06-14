@@ -1,7 +1,11 @@
 package main
 
 import (
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 
 	"github.com/miekg/dns"
@@ -15,6 +19,48 @@ type DNSServer struct {
 	fallback string
 }
 
+type DOHRequest struct {
+	body []byte
+}
+
+func NewDOHRequest(r *http.Request) (*DOHRequest, error) {
+	var (
+		body []byte
+		err  error
+	)
+
+	switch r.Method {
+	case http.MethodGet:
+		dnsParam := r.URL.Query().Get("dns")
+		if dnsParam == "" {
+			return nil, nil
+		}
+
+		body, err = base64.RawURLEncoding.DecodeString(strings.TrimSuffix(dnsParam, "="))
+		if err != nil {
+			body, err = base64.URLEncoding.DecodeString(dnsParam)
+			if err != nil {
+				return nil, errors.New("invalid base64 config")
+			}
+		}
+	case http.MethodPost:
+		if r.Header.Get("Content-Type") != "application/dns-message" {
+			return nil, nil
+		}
+
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			return nil, errors.New("failed to read request body")
+		}
+	default:
+		return nil, nil
+	}
+
+	return &DOHRequest{
+		body: body,
+	}, nil
+}
+
 func NewDNSServer(config *Config, storage *Storage) *DNSServer {
 	addr := fmt.Sprintf(":%d", config.DNS.Port)
 
@@ -26,13 +72,13 @@ func NewDNSServer(config *Config, storage *Storage) *DNSServer {
 	server.udp = &dns.Server{
 		Addr:    addr,
 		Net:     "udp",
-		Handler: dns.HandlerFunc(server.handleDNSRequest),
+		Handler: dns.HandlerFunc(server.HandleDNSMessage),
 	}
 
 	server.tcp = &dns.Server{
 		Addr:    addr,
 		Net:     "tcp",
-		Handler: dns.HandlerFunc(server.handleDNSRequest),
+		Handler: dns.HandlerFunc(server.HandleDNSMessage),
 	}
 
 	log.Printf("DNS server listening on %s\n", addr)
@@ -41,6 +87,17 @@ func NewDNSServer(config *Config, storage *Storage) *DNSServer {
 	go server.tcp.ListenAndServe()
 
 	return server
+}
+
+func (r *DOHRequest) Unpack() (*dns.Msg, error) {
+	msg := new(dns.Msg)
+
+	err := msg.Unpack(r.body)
+	if err != nil {
+		return nil, err
+	}
+
+	return msg, nil
 }
 
 func (s *DNSServer) Close() {
@@ -53,8 +110,8 @@ func (s *DNSServer) Close() {
 	}
 }
 
-func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
-	var msg dns.Msg
+func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
+	msg := new(dns.Msg)
 
 	msg.SetReply(r)
 
@@ -66,9 +123,7 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	if len(r.Question) == 0 {
-		w.WriteMsg(&msg)
-
-		return
+		return msg
 	}
 
 	question := r.Question[0]
@@ -87,9 +142,7 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 			msg.Rcode = dns.RcodeNameError
 		}
 
-		w.WriteMsg(&msg)
-
-		return
+		return msg
 	}
 
 	if s.fallback != "" {
@@ -99,9 +152,7 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 		if err == nil {
 			in.Id = r.Id
 
-			w.WriteMsg(in)
-
-			return
+			return in
 		}
 
 		log.Warnf("DNS fallback resolver error: %v", err)
@@ -109,5 +160,37 @@ func (s *DNSServer) handleDNSRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	msg.Rcode = dns.RcodeNameError
 
-	w.WriteMsg(&msg)
+	return msg
+}
+
+func (s *DNSServer) HandleDNSMessage(w dns.ResponseWriter, r *dns.Msg) {
+	resp := s.ProcessQuery(r)
+
+	w.WriteMsg(resp)
+}
+
+func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DOHRequest) {
+	msg, err := r.Unpack()
+	if err != nil {
+		abort(w, http.StatusBadRequest, "failed to unpack dns response")
+
+		return
+	}
+
+	resp := s.ProcessQuery(msg)
+
+	resp.Id = 0
+
+	respBytes, err := resp.Pack()
+	if err != nil {
+		abort(w, http.StatusInternalServerError, "failed to pack dns response")
+
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/dns-message")
+	w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate")
+	w.WriteHeader(http.StatusOK)
+
+	w.Write(respBytes)
 }
