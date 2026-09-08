@@ -43,6 +43,7 @@ const state = {
 	loadingDynDNSUsers: false,
 	savingDynDNSUser: false,
 	deletingDynDNSUsername: "",
+	activeWorkspace: "records",
 };
 
 const ui = {
@@ -50,6 +51,8 @@ const ui = {
 	headerSlot: null,
 	contentSlot: null,
 	zonesSlot: null,
+	workspaceSlot: null,
+	workspaceTabs: null,
 	recordsSlot: null,
 	dyndnsSlot: null,
 	recordsScrollByZone: {},
@@ -2235,25 +2238,75 @@ function mountShell() {
 
 function clearAuthedSlots() {
 	ui.zonesSlot = null;
+	ui.workspaceSlot = null;
+	ui.workspaceTabs = null;
 	ui.recordsSlot = null;
 	ui.dyndnsSlot = null;
 	ui.recordsScrollByZone = {};
 }
 
 function ensureAuthedLayout() {
-	if (ui.zonesSlot && ui.recordsSlot && ui.dyndnsSlot) {
+	if (ui.zonesSlot && ui.workspaceSlot && ui.workspaceTabs && ui.recordsSlot && ui.dyndnsSlot) {
 		return;
 	}
 
-	const layout = make("div", "layout");
+	const layout = make("div", "layout"),
+		workspace = make("div", "workspace"),
+		tabs = make("div", "workspace-tabs");
 
 	ui.zonesSlot = make("div", "zones-slot");
+	ui.workspaceSlot = workspace;
+	ui.workspaceTabs = tabs;
 	ui.recordsSlot = make("div", "records-slot");
 	ui.dyndnsSlot = make("div", "dyndns-slot");
 
-	layout.append(ui.zonesSlot, ui.recordsSlot, ui.dyndnsSlot);
+	const tabList = [
+		["records", "Records"],
+		["dyndns", "DynDNS"],
+	];
+
+	for (const [workspaceName, label] of tabList) {
+		const tab = make("button", "workspace-tab");
+
+		tab.type = "button";
+		tab.dataset.workspace = workspaceName;
+		tab.textContent = label;
+		tab.setAttribute("role", "tab");
+
+		tab.addEventListener("click", () => {
+			state.activeWorkspace = workspaceName;
+			syncWorkspaceTabs();
+		});
+
+		tabs.append(tab);
+	}
+
+	tabs.setAttribute("role", "tablist");
+	tabs.setAttribute("aria-label", "DNS management");
+
+	workspace.append(tabs, ui.recordsSlot, ui.dyndnsSlot);
+	layout.append(ui.zonesSlot, workspace);
 
 	ui.contentSlot.replaceChildren(layout);
+
+	syncWorkspaceTabs();
+}
+
+function syncWorkspaceTabs() {
+	if (!ui.workspaceTabs || !ui.recordsSlot || !ui.dyndnsSlot) {
+		return;
+	}
+
+	for (const tab of ui.workspaceTabs.children) {
+		const active = tab.dataset.workspace === state.activeWorkspace;
+
+		tab.classList.toggle("active", active);
+
+		tab.setAttribute("aria-selected", String(active));
+	}
+
+	ui.recordsSlot.classList.toggle("hidden", state.activeWorkspace !== "records");
+	ui.dyndnsSlot.classList.toggle("hidden", state.activeWorkspace !== "dyndns");
 }
 
 function renderHeader() {
@@ -2395,6 +2448,7 @@ function onLogoutClick() {
 	state.loadingDynDNSUsers = false;
 	state.savingDynDNSUser = false;
 	state.deletingDynDNSUsername = "";
+	state.activeWorkspace = "records";
 
 	sessionStorage.removeItem("plat-token");
 	clearNotifications();

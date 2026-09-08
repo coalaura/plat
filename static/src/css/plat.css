@@ -72,6 +72,7 @@ textarea {
 .layout,
 .zones-slot,
 .zones,
+.workspace,
 .records-slot,
 .records,
 .dyndns-slot,
@@ -323,25 +324,52 @@ textarea {
 .layout {
 	display: grid;
 	grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-	grid-template-rows: minmax(0, 1fr) minmax(150px, auto);
 	gap: 14px;
 	min-height: 70vh;
 }
 
-.zones-slot {
-	grid-row: 1 / -1;
-}
-
-.records-slot {
-	grid-column: 2;
-	grid-row: 1;
+.workspace {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
 	min-height: 0;
 }
 
+.workspace-tabs {
+	display: flex;
+	gap: 4px;
+	flex: 0 0 auto;
+	padding: 4px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg-soft);
+}
+
+.workspace-tab {
+	border: 1px solid transparent;
+	border-radius: calc(var(--radius) - 2px);
+	padding: 7px 14px;
+	background: transparent;
+	color: var(--ink-muted);
+	cursor: pointer;
+	font-weight: 600;
+}
+
+.workspace-tab:hover {
+	color: var(--ink);
+	background: color-mix(in srgb, var(--bg-elevated) 65%, transparent);
+}
+
+.workspace-tab.active {
+	border-color: var(--line);
+	background: var(--bg-elevated);
+	color: var(--ink);
+}
+
+.records-slot,
 .dyndns-slot {
-	grid-column: 2;
-	grid-row: 2;
-	max-height: 240px;
+	flex: 1;
+	min-height: 0;
 }
 
 .panel {
@@ -765,7 +793,6 @@ button:disabled {
 @media (max-width: 1080px) {
 	.layout {
 		grid-template-columns: 1fr;
-		grid-template-rows: auto;
 		height: auto;
 		overflow: visible;
 	}
@@ -775,12 +802,10 @@ button:disabled {
 	}
 
 	.zones-slot,
+	.workspace,
 	.records-slot,
 	.dyndns-slot {
-		grid-column: 1;
-		grid-row: auto;
 		height: auto;
-		max-height: none;
 	}
 
 	.zones {
