@@ -73,7 +73,9 @@ textarea {
 .zones-slot,
 .zones,
 .records-slot,
-.records {
+.records,
+.dyndns-slot,
+.dyndns {
 	height: 100%;
 	overflow: hidden;
 }
@@ -321,8 +323,25 @@ textarea {
 .layout {
 	display: grid;
 	grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+	grid-template-rows: minmax(0, 1fr) minmax(150px, auto);
 	gap: 14px;
 	min-height: 70vh;
+}
+
+.zones-slot {
+	grid-row: 1 / -1;
+}
+
+.records-slot {
+	grid-column: 2;
+	grid-row: 1;
+	min-height: 0;
+}
+
+.dyndns-slot {
+	grid-column: 2;
+	grid-row: 2;
+	max-height: 240px;
 }
 
 .panel {
@@ -402,6 +421,29 @@ textarea {
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
+}
+
+.dyndns {
+	display: flex;
+	flex-direction: column;
+}
+
+.dyndns .table-wrap {
+	min-height: 0;
+}
+
+.dyndns-table {
+	min-width: 620px;
+}
+
+.dyndns-table th:first-child,
+.dyndns-table td:first-child {
+	width: 24%;
+}
+
+.dyndns-table th:last-child,
+.dyndns-table td:last-child {
+	width: 170px;
 }
 
 .actions {
@@ -659,6 +701,17 @@ button:disabled {
 	gap: 12px;
 }
 
+.dyndns-assignments {
+	display: grid;
+	gap: 8px;
+}
+
+.dyndns-assignment {
+	display: grid;
+	grid-template-columns: minmax(150px, 1fr) 100px minmax(150px, 1fr) auto;
+	gap: 8px;
+}
+
 .dynamic-fields {
 	display: grid;
 	gap: 10px;
@@ -702,6 +755,7 @@ button:disabled {
 		opacity: 0;
 		transform: translateY(6px);
 	}
+
 	to {
 		opacity: 1;
 		transform: translateY(0);
@@ -711,6 +765,22 @@ button:disabled {
 @media (max-width: 1080px) {
 	.layout {
 		grid-template-columns: 1fr;
+		grid-template-rows: auto;
+		height: auto;
+		overflow: visible;
+	}
+
+	.content-slot {
+		overflow: auto;
+	}
+
+	.zones-slot,
+	.records-slot,
+	.dyndns-slot {
+		grid-column: 1;
+		grid-row: auto;
+		height: auto;
+		max-height: none;
 	}
 
 	.zones {
@@ -723,6 +793,10 @@ button:disabled {
 
 	.dynamic-fields {
 		grid-template-columns: 1fr;
+	}
+
+	.dyndns-assignment {
+		grid-template-columns: 1fr 90px;
 	}
 }
 

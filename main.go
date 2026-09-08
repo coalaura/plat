@@ -72,6 +72,8 @@ func main() {
 
 	r.Handle("/*", frontend(config))
 
+	r.Get("/nic/update", HandleDynDNSUpdate(storage))
+
 	r.Get("/-/info", func(w http.ResponseWriter, r *http.Request) {
 		var (
 			authenticated = isAuthenticated(config, r)
@@ -93,6 +95,10 @@ func main() {
 
 		gr.Patch("/-/zones", HandleFetchAllZones(storage))
 		gr.Patch("/-/records", HandleFetchAllRecords(storage))
+		gr.Get("/-/dyndns", HandleListDynDNSUsers(storage))
+		gr.Post("/-/dyndns", HandleCreateDynDNSUser(storage))
+		gr.Put("/-/dyndns/{username}", HandleUpdateDynDNSUser(storage))
+		gr.Delete("/-/dyndns/{username}", HandleDeleteDynDNSUser(storage))
 
 		gr.Get("/-/{zone}", HandleListRecords(storage))
 		gr.Patch("/-/{zone}", HandleFetchRecords(storage))

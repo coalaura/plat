@@ -39,6 +39,10 @@ const state = {
 	deletingRecordId: "",
 	reloadingZones: false,
 	fetchingAllRecords: false,
+	dyndnsUsers: [],
+	loadingDynDNSUsers: false,
+	savingDynDNSUser: false,
+	deletingDynDNSUsername: "",
 };
 
 const ui = {
@@ -47,6 +51,7 @@ const ui = {
 	contentSlot: null,
 	zonesSlot: null,
 	recordsSlot: null,
+	dyndnsSlot: null,
 	recordsScrollByZone: {},
 	notificationItems: new Map(),
 	notificationTimers: new Map(),
@@ -883,9 +888,12 @@ async function checkInfo() {
 	if (!state.authenticated) {
 		state.activeZone = "";
 		state.records = [];
+		state.dyndnsUsers = [];
 
 		return;
 	}
+
+	await loadDynDNSUsers();
 
 	if (!Object.keys(state.zones).length) {
 		state.activeZone = "";
@@ -1104,6 +1112,79 @@ async function deleteRecord(record) {
 		state.deletingRecordId = "";
 
 		renderRecords();
+	}
+}
+
+async function loadDynDNSUsers() {
+	if (state.loadingDynDNSUsers) {
+		return;
+	}
+
+	state.loadingDynDNSUsers = true;
+
+	renderDynDNS();
+
+	try {
+		const users = await api("/-/dyndns");
+
+		state.dyndnsUsers = Array.isArray(users) ? users : [];
+	} catch (err) {
+		state.dyndnsUsers = [];
+
+		setStatus(err.message, true);
+	} finally {
+		state.loadingDynDNSUsers = false;
+
+		renderDynDNS();
+	}
+}
+
+async function saveDynDNSUser(user, currentUsername) {
+	if (state.savingDynDNSUser) {
+		throw new Error("A DynDNS user save is already in progress.");
+	}
+
+	state.savingDynDNSUser = true;
+
+	renderDynDNS();
+
+	try {
+		const path = currentUsername ? `/-/dyndns/${encodeURIComponent(currentUsername)}` : "/-/dyndns";
+
+		await api(path, {
+			method: currentUsername ? "PUT" : "POST",
+			body: JSON.stringify(user),
+		});
+
+		setStatus(currentUsername ? "DynDNS user updated." : "DynDNS user created.", false);
+
+		await loadDynDNSUsers();
+	} finally {
+		state.savingDynDNSUser = false;
+
+		renderDynDNS();
+	}
+}
+
+async function deleteDynDNSUser(user) {
+	if (state.deletingDynDNSUsername) {
+		throw new Error("A DynDNS user delete is already in progress.");
+	}
+
+	state.deletingDynDNSUsername = user.username;
+
+	renderDynDNS();
+
+	try {
+		await api(`/-/dyndns/${encodeURIComponent(user.username)}`, { method: "DELETE" });
+
+		setStatus(`Deleted DynDNS user ${user.username}.`, false);
+
+		await loadDynDNSUsers();
+	} finally {
+		state.deletingDynDNSUsername = "";
+
+		renderDynDNS();
 	}
 }
 
@@ -1479,6 +1560,173 @@ function openRecordModal(currentRecord) {
 	});
 
 	renderTypeFields();
+}
+
+function openDynDNSUserModal(currentUser) {
+	const overlay = make("div", "overlay"),
+		modal = make("div", "modal"),
+		form = make("form", "record-form"),
+		top = make("div", "modal-top"),
+		title = make("h2", "modal-title"),
+		closeButton = make("button", "ghost"),
+		usernameField = make("label", "field"),
+		usernameTitle = make("span", "field-title"),
+		usernameInput = make("input", "input"),
+		passwordField = make("label", "field"),
+		passwordTitle = make("span", "field-title"),
+		passwordInput = make("input", "input"),
+		passwordHint = make("span", "field-hint"),
+		assignmentsTop = make("div", "inline-row"),
+		assignmentsTitle = make("span", "field-title"),
+		addAssignment = make("button", "ghost"),
+		assignments = make("div", "dyndns-assignments"),
+		footer = make("div", "modal-foot"),
+		submitButton = make("button", "button"),
+		cancelButton = make("button", "ghost");
+
+	title.textContent = currentUser ? "Edit DynDNS user" : "Create DynDNS user";
+
+	closeButton.type = "button";
+	closeButton.textContent = "Close";
+
+	usernameTitle.textContent = "Username";
+
+	usernameInput.type = "text";
+	usernameInput.name = "username";
+	usernameInput.required = true;
+	usernameInput.autocomplete = "off";
+	usernameInput.value = currentUser?.username || "";
+
+	usernameField.append(usernameTitle, usernameInput);
+
+	passwordTitle.textContent = "Password";
+
+	passwordInput.type = "password";
+	passwordInput.name = "password";
+	passwordInput.required = !currentUser;
+	passwordInput.autocomplete = "new-password";
+
+	passwordHint.textContent = currentUser ? "Leave blank to keep the current password." : "Stored securely as a one-way hash.";
+
+	passwordField.append(passwordTitle, passwordInput, passwordHint);
+
+	assignmentsTitle.textContent = "Assigned records";
+	addAssignment.type = "button";
+	addAssignment.textContent = "Add record";
+	assignmentsTop.append(assignmentsTitle, addAssignment);
+
+	submitButton.type = "submit";
+	submitButton.textContent = currentUser ? "Save" : "Create";
+
+	cancelButton.type = "button";
+	cancelButton.textContent = "Cancel";
+
+	footer.append(cancelButton, submitButton);
+	top.append(title, closeButton);
+	form.append(top, usernameField, passwordField, assignmentsTop, assignments, footer);
+	modal.append(form);
+	overlay.append(modal);
+
+	document.body.append(overlay);
+
+	const close = () => overlay.remove();
+
+	const appendAssignment = (record = {}) => {
+		const row = make("div", "dyndns-assignment"),
+			zone = make("select", "input"),
+			type = make("select", "input"),
+			name = make("input", "input"),
+			remove = make("button", "ghost", "danger");
+
+		zone.name = "assignment-zone";
+		zone.required = true;
+
+		for (const [zoneId, zoneName] of zoneEntries()) {
+			const option = make("option");
+
+			option.value = zoneId;
+			option.textContent = zoneDisplay(zoneName);
+
+			zone.append(option);
+		}
+
+		zone.value = record.zone || state.activeZone || zoneEntries()[0]?.[0] || "";
+
+		for (const recordType of ["A", "AAAA"]) {
+			const option = make("option");
+
+			option.value = recordType;
+			option.textContent = recordType;
+
+			type.append(option);
+		}
+
+		type.name = "assignment-type";
+		type.value = record.type || "A";
+
+		name.type = "text";
+		name.name = "assignment-name";
+		name.required = true;
+		name.placeholder = "home or @";
+		name.value = record.name || "";
+
+		remove.type = "button";
+		remove.textContent = "Remove";
+
+		remove.addEventListener("click", () => row.remove());
+
+		row.append(zone, type, name, remove);
+		assignments.append(row);
+	};
+
+	for (const record of currentUser?.records || []) {
+		appendAssignment(record);
+	}
+
+	addAssignment.addEventListener("click", () => appendAssignment());
+
+	closeButton.addEventListener("click", close);
+
+	cancelButton.addEventListener("click", close);
+
+	overlay.addEventListener("click", event => {
+		if (event.target === overlay) {
+			close();
+		}
+	});
+
+	form.addEventListener("submit", async event => {
+		event.preventDefault();
+
+		const records = Array.from(assignments.children, row => ({
+			zone: row.querySelector('[name="assignment-zone"]').value,
+			type: row.querySelector('[name="assignment-type"]').value,
+			name: row.querySelector('[name="assignment-name"]').value.trim(),
+		}));
+
+		for (const field of form.querySelectorAll("input, select, button")) {
+			field.disabled = true;
+		}
+
+		try {
+			await saveDynDNSUser(
+				{
+					username: usernameInput.value.trim(),
+					password: passwordInput.value,
+					records: records,
+				},
+				currentUser?.username || ""
+			);
+
+			close();
+		} catch (err) {
+			setStatus(err.message, true);
+
+			for (const field of form.querySelectorAll("input, select, button")) {
+				field.disabled = false;
+			}
+		}
+	});
 }
 
 function createHeader() {
@@ -1869,6 +2117,105 @@ function createRecords() {
 	return panel;
 }
 
+function createDynDNS() {
+	const panel = make("section", "panel", "dyndns"),
+		top = make("div", "panel-head"),
+		title = make("h2", "panel-title"),
+		add = make("button", "button"),
+		tableWrap = make("div", "table-wrap"),
+		table = make("table", "record-table", "dyndns-table"),
+		head = make("thead"),
+		body = make("tbody");
+
+	const busy = state.loadingDynDNSUsers || state.savingDynDNSUser || Boolean(state.deletingDynDNSUsername) || isUiLocked();
+
+	title.textContent = "DynDNS";
+
+	add.type = "button";
+	add.textContent = state.savingDynDNSUser ? "Saving..." : "New user";
+	add.disabled = busy;
+
+	add.addEventListener("click", () => openDynDNSUserModal());
+
+	top.append(title, add);
+	panel.append(top);
+
+	const headRow = make("tr");
+
+	for (const label of ["Username", "Assigned A/AAAA records", "Actions"]) {
+		const cell = make("th");
+
+		cell.textContent = label;
+
+		headRow.append(cell);
+	}
+
+	head.append(headRow);
+	table.append(head, body);
+
+	for (const user of state.dyndnsUsers) {
+		const records = (Array.isArray(user.records) ? user.records : []).map(record => {
+			const zoneName = state.zones[record.zone] || record.zone,
+				name = record.name === "@" ? zoneName : `${record.name}.${zoneName}`;
+
+			return `${record.type} ${zoneDisplay(name)}`;
+		});
+
+		const row = make("tr"),
+			controls = make("td", "row-actions"),
+			edit = make("button", "ghost"),
+			remove = make("button", "ghost", "danger");
+
+		edit.type = "button";
+		edit.textContent = "Edit";
+		edit.disabled = busy;
+
+		edit.addEventListener("click", () => openDynDNSUserModal(user));
+
+		remove.type = "button";
+		remove.textContent = state.deletingDynDNSUsername === user.username ? "Deleting..." : "Delete";
+		remove.disabled = busy;
+
+		remove.addEventListener("click", async () => {
+			const confirmed = await confirmAction({
+				title: "Delete DynDNS user",
+				message: `Delete ${user.username}? Assigned DNS records will not be removed.`,
+				confirmText: "Delete",
+				danger: true,
+			});
+
+			if (!confirmed) {
+				return;
+			}
+
+			try {
+				await deleteDynDNSUser(user);
+			} catch (err) {
+				setStatus(err.message, true);
+			}
+		});
+
+		controls.append(edit, remove);
+
+		row.append(createCell(user.username, ["mono"]), createCell(records.join(", ") || "--", ["mono"]), controls);
+
+		body.append(row);
+	}
+
+	if (state.dyndnsUsers.length) {
+		tableWrap.append(table);
+		panel.append(tableWrap);
+	} else {
+		const empty = make("p", "empty");
+
+		empty.textContent = state.loadingDynDNSUsers ? "Loading DynDNS users..." : "No DynDNS users yet.";
+
+		panel.append(empty);
+	}
+
+	return panel;
+}
+
 function mountShell() {
 	if (ui.mounted) {
 		return;
@@ -1889,11 +2236,12 @@ function mountShell() {
 function clearAuthedSlots() {
 	ui.zonesSlot = null;
 	ui.recordsSlot = null;
+	ui.dyndnsSlot = null;
 	ui.recordsScrollByZone = {};
 }
 
 function ensureAuthedLayout() {
-	if (ui.zonesSlot && ui.recordsSlot) {
+	if (ui.zonesSlot && ui.recordsSlot && ui.dyndnsSlot) {
 		return;
 	}
 
@@ -1901,8 +2249,9 @@ function ensureAuthedLayout() {
 
 	ui.zonesSlot = make("div", "zones-slot");
 	ui.recordsSlot = make("div", "records-slot");
+	ui.dyndnsSlot = make("div", "dyndns-slot");
 
-	layout.append(ui.zonesSlot, ui.recordsSlot);
+	layout.append(ui.zonesSlot, ui.recordsSlot, ui.dyndnsSlot);
 
 	ui.contentSlot.replaceChildren(layout);
 }
@@ -1947,9 +2296,20 @@ function renderRecords() {
 	restoreScrollPosition(ui.recordsSlot, ".table-wrap", scrollPosition || ui.recordsScrollByZone[zoneId] || null);
 }
 
+function renderDynDNS() {
+	if (!ui.mounted || !state.authenticated) {
+		return;
+	}
+
+	ensureAuthedLayout();
+
+	ui.dyndnsSlot.replaceChildren(createDynDNS());
+}
+
 function renderAuthedPanels() {
 	renderZones();
 	renderRecords();
+	renderDynDNS();
 }
 
 function renderContent() {
@@ -2031,6 +2391,10 @@ function onLogoutClick() {
 	state.deletingRecordId = "";
 	state.reloadingZones = false;
 	state.fetchingAllRecords = false;
+	state.dyndnsUsers = [];
+	state.loadingDynDNSUsers = false;
+	state.savingDynDNSUser = false;
+	state.deletingDynDNSUsername = "";
 
 	sessionStorage.removeItem("plat-token");
 	clearNotifications();

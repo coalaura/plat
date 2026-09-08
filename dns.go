@@ -249,6 +249,7 @@ func (s *DNSServer) ExchangeDoH(r *dns.Msg) (*dns.Msg, error) {
 			b64 := base64.RawURLEncoding.EncodeToString(reqBytes)
 
 			sep := "?"
+
 			if strings.Contains(s.fallbackHTTPS, "?") {
 				sep = "&"
 			}

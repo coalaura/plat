@@ -16,33 +16,39 @@ import (
 )
 
 type Storage struct {
-	mx sync.RWMutex
-	fx sync.Mutex
+	mx  sync.RWMutex
+	fx  sync.Mutex
+	dmx sync.RWMutex
 
 	client *CloudflareClient
 
-	zones map[string]*Zone
+	zones       map[string]*Zone
+	dyndnsUsers map[string]*DynDNSUser
 }
 
 func LoadStorage(config *Config) (*Storage, error) {
 	storage := Storage{
 		client: NewCloudflareClient(config.Cloudflare.Token),
 
-		zones: make(map[string]*Zone),
+		zones:       make(map[string]*Zone),
+		dyndnsUsers: make(map[string]*DynDNSUser),
 	}
 
 	file, err := OpenFileForReading("records.yml")
 	if err != nil {
-		if os.IsNotExist(err) {
-			return &storage, nil
+		if !os.IsNotExist(err) {
+			return nil, err
 		}
+	} else {
+		defer file.Close()
 
-		return nil, err
+		err = yaml.NewDecoder(file).Decode(&storage.zones)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	defer file.Close()
-
-	err = yaml.NewDecoder(file).Decode(&storage.zones)
+	err = storage.loadDynDNS()
 	if err != nil {
 		return nil, err
 	}
@@ -119,6 +125,10 @@ func (s *Storage) SetRecord(zoneId string, record *Record) error {
 
 	s.mx.RUnlock()
 
+	return s.setRecordLocked(zoneId, zone, record)
+}
+
+func (s *Storage) setRecordLocked(zoneId string, zone *Zone, record *Record) error {
 	var err error
 
 	if record.ID == "" {
@@ -131,7 +141,10 @@ func (s *Storage) SetRecord(zoneId string, record *Record) error {
 		return err
 	}
 
-	record.Update(zone.Name)
+	err = record.Update(zone.Name)
+	if err != nil {
+		return err
+	}
 
 	zone.Records[record.ID] = record
 
