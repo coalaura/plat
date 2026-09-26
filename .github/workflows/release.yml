@@ -33,13 +33,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v6
-
-    - name: Set up Go
-      uses: actions/setup-go@v6
-      with:
-        go-version-file: 'go.mod'
-        cache: false
+      uses: actions/checkout@v7
 
     - name: Set up Bun
       uses: oven-sh/setup-bun@v2
@@ -52,52 +46,46 @@ jobs:
         cd ..
         mv static/dist public
 
-    - name: Cache Go build and modules
-      uses: actions/cache@v5
-      with:
-        path: |
-          ~/.cache/go-build
-          ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-${{ hashFiles('**/go.sum', '**/go.mod') }}
-        restore-keys: |
-          ${{ runner.os }}-go-${{ matrix.goos }}-${{ matrix.goarch }}-
-
     - name: Build
-      shell: bash
-      env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
-        CGO_ENABLED: 0
-      run: |
-        mkdir -p bin
-        EXT=""
-        LDFLAGS=""
+      id: build
+      uses: coalaura/build@v1
+      with:
+        os: ${{ matrix.goos }}
+        arch: ${{ matrix.goarch }}
+        generate: false
+        output: bin/${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+        go-flags: |
+          -trimpath
+          -buildvcs=false
+          -ldflags=-s -w -X main.Version=${{ github.ref_name }}
 
-        if [[ "$GOOS" == "windows" ]]; then
-          EXT=".exe"
-        fi
-
-        go build \
-          -trimpath \
-          -buildvcs=false \
-          -ldflags "-s -w -X 'main.Version=${{ github.ref_name }}' $LDFLAGS" \
-          -o "bin/${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}" .
+    - name: Sign
+      id: sign
+      uses: coalaura/sign@v1
+      with:
+        path: ${{ steps.build.outputs.path }}
+        key: ${{ secrets.COALAURA_PFX }}
+        passphrase: ${{ secrets.COALAURA_PFX_PASSWORD }}
+        chain: |
+          https://wiese2.org/pki/issuing.pem
+          https://wiese2.org/pki/root.pem
 
     - name: Package Archive
       shell: bash
+      env:
+        SIGNED_BINARY: ${{ steps.sign.outputs.path }}
       run: |
         cp -r public bin/public
         cd bin
-        BINARY="${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+        BINARY="$(basename "$SIGNED_BINARY")"
         if [[ "${{ matrix.goos }}" == "windows" ]]; then
-          BINARY="${BINARY}.exe"
           zip -r "${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$BINARY" public
         else
           tar czf "${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$BINARY" public
         fi
 
     - name: Upload Artifact
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: ${{ env.project_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
         path: |
@@ -116,7 +104,7 @@ jobs:
         merge-multiple: true
 
     - name: Create GitHub Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         files: bin/*
         name: "Release ${{ github.ref_name }}"
