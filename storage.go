@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -24,6 +25,7 @@ type Storage struct {
 	dmx sync.RWMutex
 
 	client *CloudflareClient
+	logDB  *sql.DB
 
 	zones       map[string]*Zone
 	dyndnsUsers map[string]*DynDNSUser
@@ -60,7 +62,12 @@ func LoadStorage(config *Config) (*Storage, error) {
 		}
 	}
 
-	err = storage.loadDynDNS()
+	err = storage.LoadDynDNS()
+	if err != nil {
+		return nil, err
+	}
+
+	storage.logDB, err = OpenDynDNSLogDatabase()
 	if err != nil {
 		return nil, err
 	}

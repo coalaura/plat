@@ -6,9 +6,11 @@ require (
 	github.com/cloudflare/cloudflare-go/v7 v7.11.0
 	github.com/coalaura/etch v0.1.0
 	github.com/coalaura/plain v1.6.4
+	github.com/coalaura/schgo v0.3.2
 	github.com/coalaura/tape v0.1.1
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/goccy/go-yaml v1.19.2
+	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/miekg/dns v1.1.73
 )
 

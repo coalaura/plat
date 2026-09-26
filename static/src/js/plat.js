@@ -1821,6 +1821,107 @@ function openDynDNSUserModal(currentUser) {
 	});
 }
 
+function openDynDNSLogsModal(user) {
+	const overlay = make("div", "overlay"),
+		modal = make("div", "modal", "dyndns-log-modal"),
+		top = make("div", "modal-top"),
+		title = make("h2", "modal-title"),
+		controls = make("div", "actions"),
+		refresh = make("button", "ghost"),
+		closeButton = make("button", "ghost"),
+		note = make("p", "empty"),
+		content = make("div");
+
+	title.textContent = `DynDNS logs: ${user.username}`;
+	refresh.type = "button";
+	refresh.textContent = "Refresh";
+	closeButton.type = "button";
+	closeButton.textContent = "Close";
+	note.textContent = "Most recent 50 authenticated update results. Times are shown in your local timezone.";
+
+	const loadLogs = async () => {
+		refresh.disabled = true;
+		content.replaceChildren();
+
+		const loading = make("p", "empty");
+
+		loading.textContent = "Loading logs...";
+		content.append(loading);
+
+		try {
+			const logs = await api(`/-/dyndns/${encodeURIComponent(user.username)}/logs`);
+
+			if (!overlay.isConnected) {
+				return;
+			}
+
+			if (!Array.isArray(logs) || !logs.length) {
+				loading.textContent = "No updates logged yet.";
+
+				return;
+			}
+
+			const tableWrap = make("div", "table-wrap"),
+				table = make("table", "record-table", "dyndns-log-table"),
+				head = make("thead"),
+				headRow = make("tr"),
+				body = make("tbody");
+
+			for (const label of ["Time", "Hostname", "Address", "Source", "Result", "Details"]) {
+				const cell = make("th");
+
+				cell.textContent = label;
+				headRow.append(cell);
+			}
+
+			for (let index = logs.length - 1; index >= 0; index--) {
+				const entry = logs[index],
+					row = make("tr"),
+					time = new Date(entry.time);
+
+				row.append(
+					createCell(Number.isNaN(time.getTime()) ? entry.time : time.toLocaleString()),
+					createCell(entry.hostname || "--", ["mono"]),
+					createCell(entry.address || "--", ["mono"]),
+					createCell(entry.source || "--", ["mono"]),
+					createCell(entry.result),
+					createCell(entry.error || "--")
+				);
+
+				body.append(row);
+			}
+
+			head.append(headRow);
+			table.append(head, body);
+			tableWrap.append(table);
+			content.replaceChildren(tableWrap);
+		} catch (err) {
+			if (overlay.isConnected) {
+				loading.textContent = err.message;
+			}
+		} finally {
+			refresh.disabled = false;
+		}
+	};
+
+	refresh.addEventListener("click", loadLogs);
+	closeButton.addEventListener("click", () => overlay.remove());
+
+	overlay.addEventListener("click", event => {
+		if (event.target === overlay) {
+			overlay.remove();
+		}
+	});
+
+	controls.append(refresh, closeButton);
+	top.append(title, controls);
+	modal.append(top, note, content);
+	overlay.append(modal);
+	document.body.append(overlay);
+
+	loadLogs();
+}
+
 function createHeader() {
 	const head = make("header", "top"),
 		titleWrap = make("div", "title-wrap"),
@@ -2290,8 +2391,13 @@ function createDynDNS() {
 
 		const row = make("tr"),
 			controls = make("td", "row-actions"),
+			logs = make("button", "ghost"),
 			edit = make("button", "ghost"),
 			remove = make("button", "ghost", "danger");
+
+		logs.type = "button";
+		logs.textContent = "Logs";
+		logs.addEventListener("click", () => openDynDNSLogsModal(user));
 
 		edit.type = "button";
 		edit.textContent = "Edit";
@@ -2322,7 +2428,7 @@ function createDynDNS() {
 			}
 		});
 
-		controls.append(edit, remove);
+		controls.append(logs, edit, remove);
 
 		row.append(createCell(user.username, ["mono"]), createCell(records.join(", ") || "--", ["mono"]), controls);
 

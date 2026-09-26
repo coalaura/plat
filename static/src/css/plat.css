@@ -475,7 +475,31 @@ textarea {
 
 .dyndns-table th:last-child,
 .dyndns-table td:last-child {
-	width: 170px;
+	width: 235px;
+}
+
+.dyndns-log-modal {
+	width: min(1080px, 100%);
+	display: grid;
+	gap: 12px;
+}
+
+.dyndns-log-modal .empty {
+	margin: 0;
+}
+
+.dyndns-log-table {
+	min-width: 940px;
+}
+
+.dyndns-log-table th:last-child,
+.dyndns-log-table td:last-child {
+	width: 20%;
+}
+
+.dyndns-log-table td:last-child {
+	white-space: normal;
+	overflow-wrap: anywhere;
 }
 
 .actions {

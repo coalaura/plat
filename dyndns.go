@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 )
@@ -30,6 +32,7 @@ type DynDNSRecord struct {
 }
 
 type DynDNSUser struct {
+	ID           string         `yaml:"id" json:"-"`
 	Username     string         `yaml:"username" json:"username"`
 	PasswordHash string         `yaml:"password" json:"-"`
 	Records      []DynDNSRecord `yaml:"records" json:"records"`
@@ -60,6 +63,11 @@ func (s *Storage) GetDynDNSUsers() []DynDNSUser {
 
 func (s *Storage) CreateDynDNSUser(request DynDNSUserRequest) error {
 	user, err := s.prepareDynDNSUser(request, true)
+	if err != nil {
+		return err
+	}
+
+	user.ID, err = newDynDNSUserID()
 	if err != nil {
 		return err
 	}
@@ -107,6 +115,8 @@ func (s *Storage) UpdateDynDNSUser(username string, request DynDNSUserRequest) e
 		user.PasswordHash = current.PasswordHash
 	}
 
+	user.ID = current.ID
+
 	delete(s.dyndnsUsers, username)
 
 	s.dyndnsUsers[user.Username] = user
@@ -138,6 +148,11 @@ func (s *Storage) DeleteDynDNSUser(username string) error {
 		s.dyndnsUsers[username] = user
 
 		return err
+	}
+
+	err = s.deleteDynDNSLogs(user.ID)
+	if err != nil {
+		log.Warnf("DynDNS log cleanup failed for %s: %v", username, err)
 	}
 
 	return nil
@@ -313,7 +328,7 @@ func (s *Storage) normalizeDynDNSRecord(record DynDNSRecord) (DynDNSRecord, erro
 	return record, nil
 }
 
-func (s *Storage) loadDynDNS() error {
+func (s *Storage) LoadDynDNS() error {
 	file, err := OpenFileForReading("dyndns.yml")
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -323,14 +338,23 @@ func (s *Storage) loadDynDNS() error {
 		return err
 	}
 
-	defer file.Close()
-
 	var users []DynDNSUser
 
 	err = yaml.NewDecoder(file).Decode(&users)
+
+	closeErr := file.Close()
+
 	if err != nil {
 		return err
 	}
+
+	if closeErr != nil {
+		return closeErr
+	}
+
+	assignedIDs := make(map[string]struct{}, len(users))
+
+	var needsStore bool
 
 	for index := range users {
 		user := users[index]
@@ -343,11 +367,30 @@ func (s *Storage) loadDynDNS() error {
 			return fmt.Errorf("duplicate DynDNS username %q", user.Username)
 		}
 
+		if user.ID == "" {
+			user.ID, err = newDynDNSUserID()
+			if err != nil {
+				return err
+			}
+
+			needsStore = true
+		}
+
+		if _, exists := assignedIDs[user.ID]; exists {
+			return fmt.Errorf("duplicate DynDNS user ID %q", user.ID)
+		}
+
+		assignedIDs[user.ID] = struct{}{}
+
 		if user.Records == nil {
 			user.Records = make([]DynDNSRecord, 0)
 		}
 
 		s.dyndnsUsers[user.Username] = &user
+	}
+
+	if needsStore {
+		return s.storeDynDNSLocked()
 	}
 
 	return nil
@@ -360,7 +403,7 @@ func (s *Storage) storeDynDNSLocked() error {
 	users := make([]DynDNSUser, 0, len(s.dyndnsUsers))
 
 	for _, user := range s.dyndnsUsers {
-		users = append(users, copyDynDNSUser(user))
+		users = append(users, *user)
 	}
 
 	slices.SortFunc(users, func(first, second DynDNSUser) int {
@@ -413,7 +456,26 @@ func HandleDynDNSUpdate(storage *Storage) http.HandlerFunc {
 		}
 
 		hostnames := parseDynDNSHostnames(request.URL.Query().Get("hostname"))
+
+		logs := make([]DynDNSLog, 0, max(1, len(hostnames)))
+
+		entry := DynDNSLog{
+			Time:   time.Now().UTC(),
+			Source: requestClientAddress(request),
+		}
+
+		defer func() {
+			err := storage.AppendDynDNSLogs(username, user.ID, logs)
+			if err != nil {
+				log.Warnf("DynDNS log persistence failed for %s: %v", username, err)
+			}
+		}()
+
 		if len(hostnames) == 0 {
+			entry.Result = "nohost"
+
+			logs = append(logs, entry)
+
 			writeDynDNSResponse(w, http.StatusOK, "nohost")
 
 			return
@@ -426,6 +488,15 @@ func HandleDynDNSUpdate(storage *Storage) http.HandlerFunc {
 
 		ip := net.ParseIP(address)
 		if ip == nil {
+			for _, hostname := range hostnames {
+				result := entry
+
+				result.Hostname = hostname
+				result.Result = "badip"
+
+				logs = append(logs, result)
+			}
+
 			writeDynDNSResponse(w, http.StatusBadRequest, "badip")
 
 			return
@@ -441,14 +512,25 @@ func HandleDynDNSUpdate(storage *Storage) http.HandlerFunc {
 		responses := make([]string, 0, len(hostnames))
 
 		for _, hostname := range hostnames {
+			result := entry
+
+			result.Hostname = hostname
+			result.Address = address
+
 			assignment, hostAssigned, familyAssigned := findDynDNSAssignment(storage, user.Records, hostname, recordType)
 			if !hostAssigned {
+				result.Result = "nohost"
+
+				logs = append(logs, result)
 				responses = append(responses, "nohost")
 
 				continue
 			}
 
 			if !familyAssigned {
+				result.Result = "badip"
+
+				logs = append(logs, result)
 				responses = append(responses, "badip")
 
 				continue
@@ -456,6 +538,11 @@ func HandleDynDNSUpdate(storage *Storage) http.HandlerFunc {
 
 			updated, err := storage.UpdateDynDNSRecord(assignment, address)
 			if err != nil {
+				result.Result = "911"
+				result.Error = err.Error()
+
+				logs = append(logs, result)
+
 				writeDynDNSResponse(w, http.StatusInternalServerError, "911")
 
 				return
@@ -463,16 +550,27 @@ func HandleDynDNSUpdate(storage *Storage) http.HandlerFunc {
 
 			err = storage.Store()
 			if err != nil {
+				result.Result = "911"
+				result.Error = err.Error()
+
+				logs = append(logs, result)
+
 				writeDynDNSResponse(w, http.StatusInternalServerError, "911")
 
 				return
 			}
 
 			if updated {
+				result.Result = "good"
+
 				responses = append(responses, "good "+address)
 			} else {
+				result.Result = "nochg"
+
 				responses = append(responses, "nochg "+address)
 			}
+
+			logs = append(logs, result)
 		}
 
 		writeDynDNSResponse(w, http.StatusOK, strings.Join(responses, "\n"))
@@ -524,6 +622,17 @@ func copyDynDNSUser(user *DynDNSUser) DynDNSUser {
 	copy.Records = slices.Clone(user.Records)
 
 	return copy
+}
+
+func newDynDNSUserID() (string, error) {
+	var random [16]byte
+
+	_, err := rand.Read(random[:])
+	if err != nil {
+		return "", err
+	}
+
+	return hex.EncodeToString(random[:]), nil
 }
 
 func compareDynDNSRecords(first, second DynDNSRecord) int {

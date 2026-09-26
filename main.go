@@ -27,6 +27,8 @@ func main() {
 	storage, err := LoadStorage(config)
 	log.MustFail(err)
 
+	defer storage.logDB.Close()
+
 	if storage.client != nil {
 		log.Println("Fetching zones from Cloudflare...")
 
@@ -103,6 +105,7 @@ func main() {
 		gr.Post("/-/zones", HandleCreateZone(storage))
 		gr.Delete("/-/zones/{zone}", HandleDeleteZone(storage))
 		gr.Get("/-/dyndns", HandleListDynDNSUsers(storage))
+		gr.Get("/-/dyndns/{username}/logs", HandleListDynDNSLogs(storage))
 		gr.Post("/-/dyndns", HandleCreateDynDNSUser(storage))
 		gr.Put("/-/dyndns/{username}", HandleUpdateDynDNSUser(storage))
 		gr.Delete("/-/dyndns/{username}", HandleDeleteDynDNSUser(storage))

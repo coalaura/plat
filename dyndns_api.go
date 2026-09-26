@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -11,6 +12,32 @@ import (
 func HandleListDynDNSUsers(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		okay(w, storage.GetDynDNSUsers())
+	}
+}
+
+func HandleListDynDNSLogs(storage *Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := chi.URLParam(r, "username")
+		if username == "" {
+			abort(w, http.StatusBadRequest, "missing username")
+
+			return
+		}
+
+		logs, err := storage.GetDynDNSLogs(username)
+		if err != nil {
+			status := http.StatusInternalServerError
+
+			if errors.Is(err, errDynDNSUserNotFound) {
+				status = http.StatusNotFound
+			}
+
+			abort(w, status, err.Error())
+
+			return
+		}
+
+		okay(w, logs)
 	}
 }
 
