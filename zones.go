@@ -24,6 +24,10 @@ func (z *Zone) MatchesName(name string) bool {
 	return name == z.Name || strings.HasSuffix(name, "."+z.Name)
 }
 
+func (z *Zone) IsLocal() bool {
+	return isLocalZoneID(z.ID)
+}
+
 func (z *Zone) RecordsList() []Record {
 	records := make([]Record, 0, len(z.Records))
 
@@ -73,4 +77,8 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 
 func (z *Zone) MarshalYAML() (any, error) {
 	return z.ZoneData(), nil
+}
+
+func isLocalZoneID(id string) bool {
+	return strings.HasPrefix(id, "local-")
 }

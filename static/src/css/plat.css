@@ -409,6 +409,10 @@ textarea {
 	min-height: 560px;
 }
 
+.zones .panel-head {
+	flex-wrap: wrap;
+}
+
 .zone-list {
 	display: flex;
 	flex-direction: column;

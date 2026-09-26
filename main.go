@@ -27,10 +27,14 @@ func main() {
 	storage, err := LoadStorage(config)
 	log.MustFail(err)
 
-	log.Println("Fetching zones...")
+	if storage.client != nil {
+		log.Println("Fetching zones from Cloudflare...")
 
-	err = storage.FetchZones()
-	log.MustFail(err)
+		err = storage.FetchZones()
+		if err != nil {
+			log.Warnf("Cloudflare zone fetch failed; using saved zones: %v", err)
+		}
+	}
 
 	var dns *DNSServer
 
@@ -86,6 +90,7 @@ func main() {
 
 		okay(w, map[string]any{
 			"authenticated": authenticated,
+			"cloudflare":    storage.client != nil,
 			"zones":         zones,
 		})
 	})
@@ -95,6 +100,8 @@ func main() {
 
 		gr.Patch("/-/zones", HandleFetchAllZones(storage))
 		gr.Patch("/-/records", HandleFetchAllRecords(storage))
+		gr.Post("/-/zones", HandleCreateZone(storage))
+		gr.Delete("/-/zones/{zone}", HandleDeleteZone(storage))
 		gr.Get("/-/dyndns", HandleListDynDNSUsers(storage))
 		gr.Post("/-/dyndns", HandleCreateDynDNSUser(storage))
 		gr.Put("/-/dyndns/{username}", HandleUpdateDynDNSUser(storage))

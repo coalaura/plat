@@ -8,6 +8,10 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type CreateZoneRequest struct {
+	Name string `json:"name"`
+}
+
 func DoListRecords(storage *Storage, w http.ResponseWriter, zone string) {
 	list, err := storage.GetRecords(zone)
 	if err != nil {
@@ -41,6 +45,12 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 			return
 		}
 
+		if storage.client == nil {
+			abort(w, http.StatusServiceUnavailable, "cloudflare is not configured")
+
+			return
+		}
+
 		err = storage.FetchRecords(zone)
 		if err != nil {
 			abort(w, http.StatusInternalServerError, err.Error())
@@ -54,6 +64,12 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 
 func HandleFetchAllZones(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if storage.client == nil {
+			abort(w, http.StatusServiceUnavailable, "cloudflare is not configured")
+
+			return
+		}
+
 		err := storage.FetchZones()
 		if err != nil {
 			abort(w, http.StatusInternalServerError, err.Error())
@@ -65,8 +81,72 @@ func HandleFetchAllZones(storage *Storage) http.HandlerFunc {
 	}
 }
 
+func HandleCreateZone(storage *Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var request CreateZoneRequest
+
+		err := json.NewDecoder(r.Body).Decode(&request)
+		if err != nil {
+			abort(w, http.StatusBadRequest, err.Error())
+
+			return
+		}
+
+		zone, err := storage.CreateZone(request.Name)
+		if err != nil {
+			status := http.StatusInternalServerError
+
+			if errors.Is(err, errInvalidZoneName) {
+				status = http.StatusBadRequest
+			} else if errors.Is(err, errZoneExists) {
+				status = http.StatusConflict
+			}
+
+			abort(w, status, err.Error())
+
+			return
+		}
+
+		okay(w, map[string]string{"id": zone.ID, "name": zone.Name})
+	}
+}
+
+func HandleDeleteZone(storage *Storage) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		zone, err := resolveZone(r)
+		if err != nil {
+			abort(w, http.StatusBadRequest, err.Error())
+
+			return
+		}
+
+		err = storage.DeleteZone(zone)
+		if err != nil {
+			status := http.StatusInternalServerError
+
+			if errors.Is(err, errLocalZoneNotFound) {
+				status = http.StatusNotFound
+			} else if errors.Is(err, errZoneAssigned) {
+				status = http.StatusConflict
+			}
+
+			abort(w, status, err.Error())
+
+			return
+		}
+
+		okay(w, nil)
+	}
+}
+
 func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if storage.client == nil {
+			abort(w, http.StatusServiceUnavailable, "cloudflare is not configured")
+
+			return
+		}
+
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			abort(w, http.StatusInternalServerError, "unable to flush")
@@ -75,6 +155,12 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 		}
 
 		zones := storage.GetZones()
+
+		for zone := range zones {
+			if isLocalZoneID(zone) {
+				delete(zones, zone)
+			}
+		}
 
 		var (
 			index = 1
@@ -194,9 +280,14 @@ func HandleUnsetRecord(storage *Storage) http.HandlerFunc {
 }
 
 func resolveZone(r *http.Request) (string, error) {
-	zone := chi.URLParam(r, "zone")
-	if zone == "" {
+	zoneID := chi.URLParam(r, "zone")
+	if zoneID == "" {
 		return "", errors.New("missing zone")
+	}
+
+	zone := zoneID
+	if isLocalZoneID(zone) {
+		zone = zone[len("local-"):]
 	}
 
 	if len(zone) != 32 {
@@ -209,5 +300,5 @@ func resolveZone(r *http.Request) (string, error) {
 		}
 	}
 
-	return zone, nil
+	return zoneID, nil
 }

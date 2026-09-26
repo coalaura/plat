@@ -30,6 +30,7 @@ const state = {
 	token: sessionStorage.getItem("plat-token") || "",
 	theme: localStorage.getItem("plat-theme") || "dark",
 	authenticated: false,
+	cloudflare: false,
 	zones: {},
 	activeZone: "",
 	records: [],
@@ -499,6 +500,10 @@ function activeZoneName() {
 	return state.zones[state.activeZone] || "";
 }
 
+function activeZoneIsLocal() {
+	return state.activeZone.startsWith("local-");
+}
+
 function zoneFromHash() {
 	const raw = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
 
@@ -883,6 +888,7 @@ async function checkInfo() {
 	const info = await api("/-/info");
 
 	state.authenticated = Boolean(info?.authenticated);
+	state.cloudflare = Boolean(info?.cloudflare);
 
 	const zones = info?.zones;
 
@@ -922,6 +928,7 @@ async function checkInfo() {
 async function loadZone(zone) {
 	if (!zone) {
 		state.records = [];
+		renderZones();
 		setActiveZoneSelection(false);
 		renderRecords();
 
@@ -944,6 +951,7 @@ async function loadZone(zone) {
 
 	state.loadingRecords = true;
 
+	renderZones();
 	renderRecords();
 
 	try {
@@ -957,6 +965,7 @@ async function loadZone(zone) {
 	} finally {
 		state.loadingRecords = false;
 
+		renderZones();
 		renderRecords();
 
 		setActiveZoneSelection(zoneChanged);
@@ -1321,6 +1330,86 @@ function makeField(field, current) {
 	return wrap;
 }
 
+function openZoneModal() {
+	const overlay = make("div", "overlay"),
+		modal = make("div", "modal"),
+		form = make("form", "record-form"),
+		top = make("div", "modal-top"),
+		title = make("h2", "modal-title"),
+		closeButton = make("button", "ghost"),
+		nameField = make("label", "field"),
+		nameTitle = make("span", "field-title"),
+		nameInput = make("input", "input"),
+		footer = make("div", "modal-foot"),
+		cancelButton = make("button", "ghost"),
+		submitButton = make("button", "button");
+
+	title.textContent = "Create local zone";
+
+	closeButton.type = "button";
+	closeButton.textContent = "Close";
+
+	nameTitle.textContent = "Zone name";
+
+	nameInput.type = "text";
+	nameInput.placeholder = "example.com";
+	nameInput.required = true;
+	nameInput.autofocus = true;
+
+	cancelButton.type = "button";
+	cancelButton.textContent = "Cancel";
+
+	submitButton.type = "submit";
+	submitButton.textContent = "Create";
+
+	top.append(title, closeButton);
+	nameField.append(nameTitle, nameInput);
+	footer.append(cancelButton, submitButton);
+	form.append(top, nameField, footer);
+	modal.append(form);
+	overlay.append(modal);
+
+	document.body.append(overlay);
+
+	nameInput.focus();
+
+	const close = () => overlay.remove();
+
+	closeButton.addEventListener("click", close);
+
+	cancelButton.addEventListener("click", close);
+
+	overlay.addEventListener("click", event => {
+		if (event.target === overlay) {
+			close();
+		}
+	});
+
+	form.addEventListener("submit", async event => {
+		event.preventDefault();
+
+		submitButton.disabled = true;
+
+		try {
+			const zone = await api("/-/zones", { method: "POST", body: JSON.stringify({ name: nameInput.value.trim() }) });
+
+			state.zones[zone.id] = zone.name;
+
+			renderZones();
+
+			await loadZone(zone.id);
+
+			setStatus(`Created ${zone.name}.`, false);
+
+			close();
+		} catch (err) {
+			setStatus(err.message, true);
+
+			submitButton.disabled = false;
+		}
+	});
+}
+
 function openRecordModal(currentRecord) {
 	const overlay = make("div", "overlay"),
 		modal = make("div", "modal"),
@@ -1390,7 +1479,7 @@ function openRecordModal(currentRecord) {
 
 	typeTitle.textContent = "Type";
 
-	typeHint.textContent = "All Cloudflare DNS record types are available.";
+	typeHint.textContent = "Select a DNS record type.";
 
 	typeInput.name = "type";
 
@@ -1753,14 +1842,16 @@ function createHeader() {
 	controls.append(theme);
 
 	if (state.authenticated) {
-		const fetchAll = make("button", "ghost", "warn");
+		if (state.cloudflare) {
+			const fetchAll = make("button", "ghost", "warn");
 
-		fetchAll.type = "button";
-		fetchAll.textContent = state.fetchingAllRecords ? "Syncing all..." : "Sync all";
-		fetchAll.disabled = state.fetchingAllRecords;
-		fetchAll.addEventListener("click", onFetchAllClick);
+			fetchAll.type = "button";
+			fetchAll.textContent = state.fetchingAllRecords ? "Syncing all..." : "Sync all";
+			fetchAll.disabled = state.fetchingAllRecords;
+			fetchAll.addEventListener("click", onFetchAllClick);
 
-		controls.append(fetchAll);
+			controls.append(fetchAll);
+		}
 
 		const logout = make("button", "ghost", "danger");
 
@@ -1815,17 +1906,46 @@ function createZones() {
 	const panel = make("section", "panel", "zones"),
 		top = make("div", "panel-head"),
 		title = make("h2", "panel-title"),
-		refresh = make("button", "ghost"),
+		actions = make("div", "actions"),
 		list = make("div", "zone-list");
 
 	title.textContent = "Zones";
 
-	refresh.type = "button";
-	refresh.textContent = state.reloadingZones ? "Reloading..." : "Reload";
-	refresh.disabled = state.reloadingZones || isUiLocked();
-	refresh.addEventListener("click", onReloadZonesClick);
+	const add = make("button", "ghost");
 
-	top.append(title, refresh);
+	add.type = "button";
+	add.textContent = "New";
+	add.disabled = isUiLocked();
+
+	add.addEventListener("click", openZoneModal);
+
+	actions.append(add);
+
+	if (activeZoneIsLocal()) {
+		const remove = make("button", "ghost", "danger");
+
+		remove.type = "button";
+		remove.textContent = "Delete";
+		remove.disabled = isUiLocked();
+
+		remove.addEventListener("click", onDeleteZoneClick);
+
+		actions.append(remove);
+	}
+
+	if (state.cloudflare) {
+		const refresh = make("button", "ghost");
+
+		refresh.type = "button";
+		refresh.textContent = state.reloadingZones ? "Reloading..." : "Sync";
+		refresh.disabled = state.reloadingZones || isUiLocked();
+
+		refresh.addEventListener("click", onReloadZonesClick);
+
+		actions.append(refresh);
+	}
+
+	top.append(title, actions);
 
 	panel.append(top, list);
 
@@ -2034,7 +2154,11 @@ function createRecords() {
 	sync.addEventListener("click", onSyncClick);
 	add.addEventListener("click", onNewRecordClick);
 
-	actions.append(sync, add);
+	if (state.cloudflare && !activeZoneIsLocal()) {
+		actions.append(sync);
+	}
+
+	actions.append(add);
 
 	top.append(title, actions);
 
@@ -2435,6 +2559,7 @@ function onThemeToggleClick() {
 function onLogoutClick() {
 	state.token = "";
 	state.authenticated = false;
+	state.cloudflare = false;
 	state.zones = {};
 	state.activeZone = "";
 	state.records = [];
@@ -2519,6 +2644,44 @@ async function onZoneClick(zone) {
 	}
 
 	await loadZone(zone);
+}
+
+async function onDeleteZoneClick() {
+	if (!activeZoneIsLocal() || isUiLocked()) {
+		return;
+	}
+
+	const zoneId = state.activeZone,
+		zoneName = activeZoneName();
+
+	const confirmed = await confirmAction({
+		title: "Delete local zone",
+		message: `Delete ${zoneName} and all its records? This cannot be undone.`,
+		confirmText: "Delete",
+		danger: true,
+	});
+
+	if (!confirmed) {
+		return;
+	}
+
+	try {
+		await api(`/-/zones/${encodeURIComponent(zoneId)}`, { method: "DELETE" });
+
+		delete state.zones[zoneId];
+
+		state.activeZone = zoneEntries()[0]?.[0] || "";
+
+		setZoneHash(state.activeZone);
+
+		renderZones();
+
+		await loadZone(state.activeZone);
+
+		setStatus(`Deleted ${zoneName}.`, false);
+	} catch (err) {
+		setStatus(err.message, true);
+	}
 }
 
 async function onHashChange() {

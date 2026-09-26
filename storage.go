@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/coalaura/etch"
@@ -26,12 +29,21 @@ type Storage struct {
 	dyndnsUsers map[string]*DynDNSUser
 }
 
+var (
+	errInvalidZoneName   = errors.New("invalid zone name")
+	errZoneExists        = errors.New("zone already exists")
+	errLocalZoneNotFound = errors.New("local zone not found")
+	errZoneAssigned      = errors.New("remove DynDNS assignments before deleting this zone")
+)
+
 func LoadStorage(config *Config) (*Storage, error) {
 	storage := Storage{
-		client: NewCloudflareClient(config.Cloudflare.Token),
-
 		zones:       make(map[string]*Zone),
 		dyndnsUsers: make(map[string]*DynDNSUser),
+	}
+
+	if config.Cloudflare.Token != "" {
+		storage.client = NewCloudflareClient(config.Cloudflare.Token)
 	}
 
 	file, err := OpenFileForReading("records.yml")
@@ -54,6 +66,84 @@ func LoadStorage(config *Config) (*Storage, error) {
 	}
 
 	return &storage, nil
+}
+
+func (s *Storage) CreateZone(name string) (*Zone, error) {
+	name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+	if !validDNSName(name) {
+		return nil, errInvalidZoneName
+	}
+
+	var random [16]byte
+
+	_, err := rand.Read(random[:])
+	if err != nil {
+		return nil, err
+	}
+
+	zone := &Zone{
+		ID:      "local-" + hex.EncodeToString(random[:]),
+		Name:    name,
+		Records: make(map[string]*Record),
+	}
+
+	s.mx.Lock()
+
+	for _, existing := range s.zones {
+		if strings.EqualFold(existing.Name, name) {
+			s.mx.Unlock()
+
+			return nil, errZoneExists
+		}
+	}
+
+	s.zones[zone.ID] = zone
+	s.mx.Unlock()
+
+	err = s.Store()
+	if err != nil {
+		s.mx.Lock()
+		delete(s.zones, zone.ID)
+		s.mx.Unlock()
+
+		return nil, err
+	}
+
+	return zone, nil
+}
+
+func (s *Storage) DeleteZone(zoneId string) error {
+	s.dmx.RLock()
+	defer s.dmx.RUnlock()
+
+	for _, user := range s.dyndnsUsers {
+		for _, assignment := range user.Records {
+			if assignment.Zone == zoneId {
+				return errZoneAssigned
+			}
+		}
+	}
+
+	s.mx.Lock()
+
+	zone, exists := s.zones[zoneId]
+	if !exists || !zone.IsLocal() {
+		s.mx.Unlock()
+
+		return errLocalZoneNotFound
+	}
+
+	delete(s.zones, zoneId)
+	s.mx.Unlock()
+
+	err := s.Store()
+	if err != nil {
+		s.mx.Lock()
+		s.zones[zoneId] = zone
+		s.mx.Unlock()
+	}
+
+	return err
 }
 
 func (s *Storage) GetZones() map[string]string {
@@ -129,21 +219,37 @@ func (s *Storage) SetRecord(zoneId string, record *Record) error {
 }
 
 func (s *Storage) setRecordLocked(zoneId string, zone *Zone, record *Record) error {
-	var err error
-
-	if record.ID == "" {
-		err = s.client.CreateRecord(context.Background(), zoneId, record)
-	} else {
-		err = s.client.UpdateRecord(context.Background(), zoneId, record)
-	}
-
+	err := record.Update(zone.Name)
 	if err != nil {
 		return err
 	}
 
-	err = record.Update(zone.Name)
-	if err != nil {
-		return err
+	if s.client != nil && !zone.IsLocal() {
+		if record.ID == "" || isLocalZoneID(record.ID) {
+			previousID := record.ID
+
+			err = s.client.CreateRecord(context.Background(), zoneId, record)
+			if err == nil && previousID != "" {
+				delete(zone.Records, previousID)
+			}
+		} else {
+			err = s.client.UpdateRecord(context.Background(), zoneId, record)
+		}
+
+		if err != nil {
+			return err
+		}
+	} else if record.ID == "" {
+		var random [16]byte
+
+		_, err = rand.Read(random[:])
+		if err != nil {
+			return err
+		}
+
+		record.ID = "local-" + hex.EncodeToString(random[:])
+	} else if _, exists := zone.Records[record.ID]; !exists {
+		return errors.New("record not found")
 	}
 
 	zone.Records[record.ID] = record
@@ -170,9 +276,11 @@ func (s *Storage) UnsetRecord(zoneId, recordId string) error {
 		return errors.New("record not found")
 	}
 
-	err := s.client.DeleteRecord(context.Background(), zoneId, recordId)
-	if err != nil {
-		return err
+	if s.client != nil && !zone.IsLocal() && !isLocalZoneID(recordId) {
+		err := s.client.DeleteRecord(context.Background(), zoneId, recordId)
+		if err != nil {
+			return err
+		}
 	}
 
 	delete(zone.Records, recordId)
@@ -181,37 +289,50 @@ func (s *Storage) UnsetRecord(zoneId, recordId string) error {
 }
 
 func (s *Storage) FetchZones() error {
+	if s.client == nil {
+		return errors.New("cloudflare is not configured")
+	}
+
 	zones, err := s.client.ListZones(context.Background())
 	if err != nil {
 		return err
 	}
 
 	s.mx.Lock()
-	defer s.mx.Unlock()
 
-	for name, zone := range s.zones {
-		zone.mx.RLock()
-		empty := len(zone.Records) == 0
-		zone.mx.RUnlock()
+	localNames := make(map[string]struct{}, len(s.zones))
 
-		if empty {
-			delete(s.zones, name)
+	for _, existing := range s.zones {
+		if existing.IsLocal() {
+			localNames[strings.ToLower(existing.Name)] = struct{}{}
 		}
 	}
 
 	for _, zone := range zones {
+		if _, exists := localNames[strings.ToLower(zone.Name)]; exists {
+			continue
+		}
+
 		exists, ok := s.zones[zone.ID]
 		if ok {
+			exists.mx.Lock()
 			exists.Name = zone.Name
+			exists.mx.Unlock()
 		} else {
 			s.zones[zone.ID] = zone
 		}
 	}
 
-	return nil
+	s.mx.Unlock()
+
+	return s.Store()
 }
 
 func (s *Storage) FetchRecords(zoneId string) error {
+	if s.client == nil {
+		return errors.New("cloudflare is not configured")
+	}
+
 	s.mx.RLock()
 
 	zone, exists := s.zones[zoneId]
@@ -219,6 +340,12 @@ func (s *Storage) FetchRecords(zoneId string) error {
 		s.mx.RUnlock()
 
 		return fmt.Errorf("unknown zone %q", zoneId)
+	}
+
+	if zone.IsLocal() {
+		s.mx.RUnlock()
+
+		return errors.New("local zones cannot be synced from Cloudflare")
 	}
 
 	zone.mx.Lock()
@@ -282,7 +409,7 @@ func (s *Storage) Store() error {
 		zonePath := buf.String()
 
 		comments[zonePath] = []*yaml.Comment{
-			yaml.HeadComment(" " + zone.Name),
+			yaml.HeadComment(" " + data.Name),
 			yaml.FootComment(),
 		}
 

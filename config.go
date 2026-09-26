@@ -90,11 +90,6 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("server.token is empty")
 	}
 
-	// cloudflare
-	if c.Cloudflare.Token == "" {
-		return fmt.Errorf("cloudflare.token is empty")
-	}
-
 	// dns
 	if c.DNS.Enabled {
 		if c.DNS.Port < 1 || c.DNS.Port > 65535 {
@@ -142,7 +137,7 @@ func (e *Config) Store() error {
 		"$.server.token": {yaml.HeadComment(fmt.Sprintf(" token for authentication, (default: %q)", def.Server.Token))},
 
 		"$.cloudflare":       {yaml.FootComment()},
-		"$.cloudflare.token": {yaml.HeadComment(fmt.Sprintf(" cloudflare api token (default: %q)", def.Cloudflare.Token))},
+		"$.cloudflare.token": {yaml.HeadComment(" optional cloudflare api token; leave empty to run plat on its own")},
 
 		"$.dns.enabled":        {yaml.HeadComment(fmt.Sprintf(" enable built-in dns server (default: %v)", def.DNS.Enabled))},
 		"$.dns.port":           {yaml.HeadComment(fmt.Sprintf(" dns server port (default: %v)", def.DNS.Port))},
