@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -11,7 +13,7 @@ import (
 )
 
 const (
-	dynDNSLogDatabasePath = "dyndns-logs.db"
+	dynDNSLogDatabasePath = "data/dyndns-logs.db"
 	dynDNSLogLimit        = 50
 )
 
@@ -124,6 +126,13 @@ func (s *Storage) deleteDynDNSLogs(endpointID string) error {
 }
 
 func OpenDynDNSLogDatabase() (*sql.DB, error) {
+	dir := filepath.Dir(dynDNSLogDatabasePath)
+
+	_, err := os.Stat(dir)
+	if os.IsNotExist(err) {
+		os.MkdirAll(dir, 0755)
+	}
+
 	database, err := sql.Open("sqlite3", dynDNSLogDatabasePath+"?_journal_mode=WAL&_busy_timeout=5000&_sync=NORMAL")
 	if err != nil {
 		return nil, err

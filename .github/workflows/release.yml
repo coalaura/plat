@@ -53,6 +53,7 @@ jobs:
         os: ${{ matrix.goos }}
         arch: ${{ matrix.goarch }}
         generate: false
+        cgo: true
         output: bin/${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         go-flags: |
           -trimpath
