@@ -10,20 +10,21 @@ Type=simple
 User=plat
 Group=plat
 
-WorkingDirectory=/var/plat.example.com
-ExecStart=/var/plat.example.com/plat
+WorkingDirectory=/var/dns.example.com
+ExecStart=/var/dns.example.com/plat
 
-StandardOutput=append:/var/plat.example.com/plat.log
-StandardError=append:/var/plat.example.com/plat.log
+StandardOutput=append:/var/dns.example.com/logs/plat.log
+StandardError=append:/var/dns.example.com/logs/plat.log
 StandardInput=null
 
 # Filesystem Sandboxing
 ProtectSystem=strict
-ReadWritePaths=/var/plat.example.com
+ReadOnlyPaths=/var/dns.example.com
+ReadWritePaths=/var/dns.example.com/logs /var/dns.example.com/data
 ProtectHome=yes
 PrivateTmp=yes
 PrivateMounts=yes
-UMask=0022
+UMask=0077
 
 # Kernel & Hardware Protection
 PrivateDevices=yes
@@ -66,9 +67,8 @@ SystemCallFilter=~@clock @cpu-emulation @debug @module @mount @obsolete @reboot 
 InaccessiblePaths=-/bin -/usr/bin -/sbin -/usr/sbin -/usr/local/bin
 
 # Restart & Runtime
-Restart=always
+Restart=on-failure
 RestartSec=3
-RuntimeMaxSec=5d
 
 # Defaults
 LimitCORE=0
