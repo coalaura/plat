@@ -1017,6 +1017,8 @@ async function fetchAllZonesFromCloudflare() {
 
 	setFetchAllLog("Started full zone sync.");
 
+	const skippedZones = [];
+
 	try {
 		let lastIndex = 0,
 			lastTotal = 0;
@@ -1035,6 +1037,17 @@ async function fetchAllZonesFromCloudflare() {
 				setFetchAllSummary(label);
 				setFetchAllLog(label);
 				setFetchAllProgress(index, total);
+
+				return;
+			}
+
+			if (message.status === "skipped") {
+				const label = message.name || zoneDisplay(String(message.zone || "")),
+					warning = `${label}: ${message.error || "Zone is no longer accessible in Cloudflare. Existing records have been kept."}`;
+
+				skippedZones.push(warning);
+
+				setFetchAllLog(warning, "error");
 
 				return;
 			}
@@ -1058,14 +1071,23 @@ async function fetchAllZonesFromCloudflare() {
 			await loadZone(state.activeZone);
 		}
 
-		setFetchAllResult("ok", "All zones synchronized.", "Completed successfully.");
-		setStatus("All zones synchronized.", false);
+		if (skippedZones.length) {
+			const summary = `Sync completed with ${skippedZones.length} skipped zone${skippedZones.length === 1 ? "" : "s"}. Existing records have been kept.`;
+
+			setFetchAllResult("error", summary, skippedZones.join("\n\n"));
+			setStatus(summary, true);
+		} else {
+			setFetchAllResult("ok", "All zones synchronized.", "Completed successfully.");
+			setStatus("All zones synchronized.", false);
+		}
 	} catch (err) {
 		if (err?.name === "AbortError") {
 			setFetchAllResult("error", "Fetch-all canceled.", "Request canceled by user.");
 			setStatus("Fetch-all canceled.", false);
 		} else {
-			setFetchAllResult("error", "Fetch-all failed.", err.message || "Sync failed.");
+			const details = [...skippedZones, err.message || "Sync failed."].join("\n\n");
+
+			setFetchAllResult("error", "Fetch-all failed.", details);
 			setStatus(err.message || "Sync failed.", true);
 		}
 	} finally {

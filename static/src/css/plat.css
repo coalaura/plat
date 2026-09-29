@@ -266,6 +266,7 @@ textarea {
 }
 
 .fetch-all-log {
+	white-space: pre-wrap;
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	background: color-mix(in srgb, var(--bg-soft) 88%, transparent);

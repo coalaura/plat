@@ -53,7 +53,13 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 
 		err = storage.FetchRecords(zone)
 		if err != nil {
-			abort(w, http.StatusInternalServerError, err.Error())
+			status := http.StatusInternalServerError
+
+			if errors.Is(err, errCloudflareZoneUnavailable) {
+				status = http.StatusConflict
+			}
+
+			abort(w, status, err.Error())
 
 			return
 		}
@@ -154,6 +160,19 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 			return
 		}
 
+		availableZones, err := storage.client.ListZones(r.Context())
+		if err != nil {
+			abort(w, http.StatusBadGateway, err.Error())
+
+			return
+		}
+
+		availableIDs := make(map[string]struct{}, len(availableZones))
+
+		for _, zone := range availableZones {
+			availableIDs[zone.ID] = struct{}{}
+		}
+
 		zones := storage.GetZones()
 
 		for zone := range zones {
@@ -163,12 +182,13 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 		}
 
 		var (
-			index = 1
-			total = len(zones)
-			ctx   = r.Context()
+			index   = 1
+			total   = len(zones)
+			ctx     = r.Context()
+			skipped int
 		)
 
-		for zone := range zones {
+		for zone, name := range zones {
 			select {
 			case <-ctx.Done():
 				return
@@ -182,10 +202,30 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 				"total":  total,
 			})
 
-			err := storage.FetchRecords(zone)
+			if _, available := availableIDs[zone]; available {
+				err = storage.FetchRecords(zone)
+			} else {
+				err = unavailableCloudflareZone(zone, name)
+			}
+
 			if err != nil {
+				if errors.Is(err, errCloudflareZoneUnavailable) {
+					writeNDJson(w, flusher, map[string]string{
+						"status": "skipped",
+						"zone":   zone,
+						"name":   name,
+						"error":  err.Error(),
+					})
+
+					skipped++
+					index++
+
+					continue
+				}
+
 				writeNDJson(w, flusher, map[string]string{
 					"status": "failed",
+					"zone":   zone,
 					"error":  err.Error(),
 				})
 
@@ -195,8 +235,10 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 			index++
 		}
 
-		writeNDJson(w, flusher, map[string]string{
-			"status": "done",
+		writeNDJson(w, flusher, map[string]any{
+			"status":  "done",
+			"synced":  total - skipped,
+			"skipped": skipped,
 		})
 	}
 }

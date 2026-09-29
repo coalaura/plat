@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/cloudflare/cloudflare-go/v7"
@@ -14,6 +16,8 @@ import (
 type CloudflareClient struct {
 	client *cloudflare.Client
 }
+
+var errCloudflareZoneUnavailable = errors.New("cloudflare zone is no longer accessible")
 
 func (c *CloudflareClient) ListZones(ctx context.Context) ([]*Zone, error) {
 	var list []*Zone
@@ -57,7 +61,7 @@ func (c *CloudflareClient) GetRecords(ctx context.Context, zoneId, zoneName stri
 
 	for {
 		if err != nil {
-			return nil, err
+			return nil, c.recordFetchError(ctx, zoneId, zoneName, err)
 		}
 
 		if results == nil {
@@ -180,6 +184,27 @@ func (c *CloudflareClient) DNSSECNameservers(ctx context.Context, zoneID string)
 	return nameservers, nil
 }
 
+func (c *CloudflareClient) recordFetchError(ctx context.Context, zoneID, zoneName string, fetchErr error) error {
+	var apiError *cloudflare.Error
+
+	if !errors.As(fetchErr, &apiError) || (apiError.StatusCode != http.StatusForbidden && apiError.StatusCode != http.StatusNotFound) {
+		return fetchErr
+	}
+
+	zones, err := c.ListZones(ctx)
+	if err != nil {
+		return fetchErr
+	}
+
+	for _, zone := range zones {
+		if zone.ID == zoneID {
+			return fetchErr
+		}
+	}
+
+	return unavailableCloudflareZone(zoneID, zoneName)
+}
+
 func NewCloudflareClient(token string) *CloudflareClient {
 	client := cloudflare.NewClient(option.WithAPIToken(token))
 
@@ -202,4 +227,8 @@ func asCloudflareDNSSECDetails(result *dns.DNSSEC) DNSSECDetails {
 	}
 
 	return details
+}
+
+func unavailableCloudflareZone(zoneID, zoneName string) error {
+	return fmt.Errorf("%w: %s (%s) is absent from the zones available to this API token; it may have been deleted, replaced, or lost token access. Existing records have been kept", errCloudflareZoneUnavailable, zoneName, zoneID)
 }
