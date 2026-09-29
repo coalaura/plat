@@ -615,6 +615,64 @@ textarea {
 	border-top: 1px dashed var(--line);
 }
 
+.email-protection-link {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--ink-muted);
+	cursor: pointer;
+}
+
+.email-protection-link:hover {
+	color: var(--ink);
+	text-decoration: underline;
+}
+
+.email-protection-help,
+.email-protection-feedback {
+	margin: 0;
+	color: var(--ink-muted);
+	font-size: 0.88rem;
+	line-height: 1.5;
+}
+
+.email-protection-preview {
+	display: grid;
+	gap: 10px;
+}
+
+.email-protection-record {
+	display: grid;
+	gap: 10px;
+	min-width: 0;
+	padding: 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg-soft);
+}
+
+.email-protection-record-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 10px;
+}
+
+.email-protection-record-head h3 {
+	margin: 0;
+	font-size: 0.88rem;
+	font-weight: 600;
+}
+
+.email-protection-record code {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	font-family: "IBM Plex Mono", monospace;
+	font-size: 0.8rem;
+	line-height: 1.5;
+	color: var(--ink);
+}
+
 .button,
 .ghost {
 	border-radius: var(--radius);

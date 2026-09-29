@@ -111,6 +111,7 @@ func main() {
 		gr.Delete("/-/dyndns/{username}", HandleDeleteDynDNSUser(storage))
 		gr.Get("/-/{zone}/dnssec", HandleDNSSEC(storage, config, false))
 		gr.Put("/-/{zone}/dnssec", HandleDNSSEC(storage, config, true))
+		gr.Post("/-/{zone}/email-protection", HandleProtectEmail(storage))
 
 		gr.Get("/-/{zone}", HandleListRecords(storage))
 		gr.Patch("/-/{zone}", HandleFetchRecords(storage))

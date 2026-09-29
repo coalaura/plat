@@ -2540,6 +2540,259 @@ function recordDetails(record) {
 	}
 }
 
+function hasEmailRecords() {
+	const zoneName = zoneDisplay(activeZoneName()).toLowerCase();
+
+	return state.records.some(record => {
+		const type = record.type.toUpperCase(),
+			fullName = record.name.toLowerCase().replace(/\.$/, ""),
+			name = fullName.endsWith(`.${zoneName}`) ? fullName.slice(0, -zoneName.length - 1) : fullName,
+			content = decodeTXT(record.content).trim().toLowerCase();
+
+		return type === "MX" || type === "SPF"
+			|| name === "_dmarc" || name.startsWith("_dmarc.")
+			|| name === "_domainkey" || name.endsWith("._domainkey") || name.includes("._domainkey.")
+			|| (type === "TXT" && /^(v=spf1|v=dkim1|v=dmarc1)/.test(content));
+	});
+}
+
+function createEmailProtection() {
+	const note = make("div", "note"),
+		button = make("button", "email-protection-link");
+
+	button.type = "button";
+	button.textContent = "Protect unused email";
+
+	button.addEventListener("click", openEmailProtectionModal);
+
+	note.append(button);
+
+	return note;
+}
+
+function openEmailProtectionModal() {
+	const zoneID = state.activeZone,
+		zoneName = zoneDisplay(activeZoneName()),
+		previousFocus = document.activeElement,
+		overlay = make("div", "overlay"),
+		modal = make("div", "modal", "email-protection-modal"),
+		form = make("form", "record-form"),
+		top = make("div", "modal-top"),
+		title = make("h2", "modal-title"),
+		closeButton = make("button", "ghost"),
+		help = make("p", "email-protection-help"),
+		label = make("label", "field"),
+		emailTitle = make("span", "field-title"),
+		email = make("input", "input"),
+		reportingHelp = make("span", "field-hint"),
+		preview = make("div", "email-protection-preview"),
+		feedback = make("p", "field-hint", "email-protection-feedback"),
+		footer = make("div", "modal-foot"),
+		cancel = make("button", "ghost"),
+		submit = make("button", "button");
+
+	let busy = false;
+
+	title.textContent = `Email protection — ${zoneName}`;
+	title.id = "email-protection-title";
+
+	modal.setAttribute("role", "dialog");
+	modal.setAttribute("aria-modal", "true");
+	modal.setAttribute("aria-labelledby", title.id);
+	modal.setAttribute("aria-describedby", "email-protection-help");
+
+	closeButton.type = "button";
+	closeButton.textContent = "Close";
+
+	help.id = "email-protection-help";
+	help.textContent = "For domains that do not send email. Add SPF, DKIM, and DMARC policies asking receiving mail servers to reject mail claiming to come from this domain or its subdomains. Change these records before setting up email. Existing email records are checked again before creation.";
+
+	emailTitle.textContent = "Reporting email address (optional)";
+
+	email.type = "email";
+	email.name = "reporting_email";
+	email.placeholder = "test@example.com";
+	email.autocomplete = "email";
+	email.setAttribute("aria-describedby", "email-protection-reporting-help");
+
+	reportingHelp.id = "email-protection-reporting-help";
+	reportingHelp.textContent = "Receive aggregate DMARC reports. An address on another domain may need authorization from that domain’s email provider.";
+
+	feedback.setAttribute("role", "status");
+	feedback.hidden = true;
+
+	const recordPreview = (purpose, name, content) => {
+		const card = make("section", "email-protection-record"),
+			heading = make("div", "email-protection-record-head"),
+			caption = make("h3"),
+			type = make("span", "field-hint", "mono"),
+			owner = make("div", "field"),
+			ownerTitle = make("span", "field-title"),
+			ownerValue = make("code"),
+			value = make("div", "field"),
+			valueTitle = make("span", "field-title"),
+			valueContent = make("code", "email-protection-record-value");
+
+		caption.textContent = purpose;
+
+		type.textContent = "TXT";
+
+		ownerTitle.textContent = "Name";
+
+		ownerValue.textContent = name;
+
+		valueTitle.textContent = "Value";
+
+		valueContent.textContent = content;
+
+		heading.append(caption, type);
+		owner.append(ownerTitle, ownerValue);
+		value.append(valueTitle, valueContent);
+		card.append(heading, owner, value);
+		preview.append(card);
+
+		return valueContent;
+	};
+
+	recordPreview("SPF · Deny all senders", zoneName, "v=spf1 -all");
+	recordPreview("DKIM · Revoke signing keys", "*._domainkey", "v=DKIM1; p=");
+
+	const dmarcValue = recordPreview("DMARC · Reject spoofed mail", "_dmarc", "");
+
+	const updatePreview = () => {
+		const reportingEmail = email.value.trim(),
+			reportingTag = reportingEmail ? ` rua=mailto:${reportingEmail};` : "";
+
+		dmarcValue.textContent = `v=DMARC1; p=reject; sp=reject; adkim=s; aspf=s;${reportingTag}`;
+	};
+
+	email.addEventListener("input", updatePreview);
+
+	updatePreview();
+
+	submit.type = "submit";
+	submit.textContent = "Create protection records";
+
+	cancel.type = "button";
+	cancel.textContent = "Cancel";
+
+	top.append(title, closeButton);
+	label.append(emailTitle, email, reportingHelp);
+	footer.append(cancel, submit);
+	form.append(top, help, label, preview, feedback, footer);
+	modal.append(form);
+	overlay.append(modal);
+
+	document.body.append(overlay);
+
+	const close = () => {
+		if (busy) {
+			return;
+		}
+
+		document.removeEventListener("keydown", onKeydown);
+
+		overlay.remove();
+
+		if (previousFocus?.isConnected) {
+			previousFocus.focus();
+		} else {
+			ui.recordsSlot?.querySelector("button:not(:disabled)")?.focus();
+		}
+	};
+
+	const onKeydown = event => {
+		if (event.key === "Escape") {
+			close();
+		}
+
+		if (event.key !== "Tab") {
+			return;
+		}
+
+		const controls = [...modal.querySelectorAll("button, input")].filter(control => !control.disabled),
+			first = controls[0], last = controls[controls.length - 1];
+
+		if (!first || (event.shiftKey && document.activeElement === first)) {
+			event.preventDefault();
+
+			last?.focus();
+		} else if (!event.shiftKey && document.activeElement === last) {
+			event.preventDefault();
+
+			first.focus();
+		}
+	};
+
+	document.addEventListener("keydown", onKeydown);
+	closeButton.addEventListener("click", close);
+	cancel.addEventListener("click", close);
+
+	overlay.addEventListener("click", event => {
+		if (event.target === overlay) {
+			close();
+		}
+	});
+
+	email.focus();
+
+	form.addEventListener("submit", async event => {
+		event.preventDefault();
+
+		if (busy || state.savingRecord || isUiLocked()) {
+			return;
+		}
+
+		const reportingEmail = email.value.trim();
+
+		let created = false;
+
+		busy = true;
+
+		state.savingRecord = true;
+
+		email.disabled = closeButton.disabled = cancel.disabled = submit.disabled = true;
+
+		submit.textContent = "Creating...";
+
+		feedback.hidden = true;
+
+		renderRecords();
+
+		try {
+			await api(`/-/${encodeURIComponent(zoneID)}/email-protection`, {
+				method: "POST",
+				body: JSON.stringify({ reporting_email: reportingEmail }),
+			});
+
+			setStatus("Email protection records created.", false);
+
+			created = true;
+		} catch (err) {
+			feedback.textContent = err.message;
+			feedback.hidden = false;
+		} finally {
+			if (state.activeZone === zoneID) {
+				await loadZone(zoneID);
+			}
+
+			state.savingRecord = false;
+
+			renderRecords();
+
+			busy = false;
+
+			email.disabled = closeButton.disabled = cancel.disabled = submit.disabled = false;
+
+			submit.textContent = "Create protection records";
+
+			if (created) {
+				close();
+			}
+		}
+	});
+}
+
 function createRecords() {
 	const panel = make("section", "panel", "records"),
 		top = make("div", "panel-head"),
@@ -2623,6 +2876,10 @@ function createRecords() {
 
 		panel.append(empty);
 
+		if (!recordsBusy && !hasEmailRecords()) {
+			panel.append(createEmailProtection());
+		}
+
 		return panel;
 	}
 
@@ -2662,6 +2919,10 @@ function createRecords() {
 	tableWrap.append(table);
 
 	panel.append(tableWrap);
+
+	if (!recordsBusy && !hasEmailRecords()) {
+		panel.append(createEmailProtection());
+	}
 
 	return panel;
 }
