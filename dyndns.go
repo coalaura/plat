@@ -20,9 +20,11 @@ import (
 )
 
 const (
-	dynDNSHashIterations = 600000
-	dynDNSSaltSize       = 16
-	dynDNSKeySize        = 32
+	DynDNSFile = "dyndns.yml"
+
+	DynDNSHashIterations = 600000
+	DynDNSSaltSize       = 16
+	DynDNSKeySize        = 32
 )
 
 type DynDNSRecord struct {
@@ -329,7 +331,7 @@ func (s *Storage) normalizeDynDNSRecord(record DynDNSRecord) (DynDNSRecord, erro
 }
 
 func (s *Storage) LoadDynDNS() error {
-	file, err := OpenFileForReading("dyndns.yml")
+	file, err := OpenFileForReading(DynDNSFile)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -410,13 +412,15 @@ func (s *Storage) storeDynDNSLocked() error {
 		return strings.Compare(first.Username, second.Username)
 	})
 
-	file, err := os.OpenFile("dyndns.tmp", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	tempPath := DynDNSFile + ".tmp"
+
+	file, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
 
 	defer file.Close()
-	defer os.Remove("dyndns.tmp")
+	defer os.Remove(tempPath)
 
 	err = file.Chmod(0600)
 	if err != nil {
@@ -433,7 +437,7 @@ func (s *Storage) storeDynDNSLocked() error {
 		return err
 	}
 
-	return os.Rename("dyndns.tmp", "dyndns.yml")
+	return os.Rename(tempPath, DynDNSFile)
 }
 
 func HandleDynDNSUpdate(storage *Storage) http.HandlerFunc {
@@ -578,38 +582,38 @@ func HandleDynDNSUpdate(storage *Storage) http.HandlerFunc {
 }
 
 func hashDynDNSPassword(password string) (string, error) {
-	salt := make([]byte, dynDNSSaltSize)
+	salt := make([]byte, DynDNSSaltSize)
 
 	_, err := rand.Read(salt)
 	if err != nil {
 		return "", err
 	}
 
-	key, err := pbkdf2.Key(sha256.New, password, salt, dynDNSHashIterations, dynDNSKeySize)
+	key, err := pbkdf2.Key(sha256.New, password, salt, DynDNSHashIterations, DynDNSKeySize)
 	if err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", dynDNSHashIterations, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
+	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", DynDNSHashIterations, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
 func verifyDynDNSPassword(encoded, password string) bool {
 	parts := strings.Split(encoded, "$")
-	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" || parts[1] != fmt.Sprint(dynDNSHashIterations) {
+	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" || parts[1] != fmt.Sprint(DynDNSHashIterations) {
 		return false
 	}
 
 	salt, err := base64.RawStdEncoding.DecodeString(parts[2])
-	if err != nil || len(salt) != dynDNSSaltSize {
+	if err != nil || len(salt) != DynDNSSaltSize {
 		return false
 	}
 
 	want, err := base64.RawStdEncoding.DecodeString(parts[3])
-	if err != nil || len(want) != dynDNSKeySize {
+	if err != nil || len(want) != DynDNSKeySize {
 		return false
 	}
 
-	got, err := pbkdf2.Key(sha256.New, password, salt, dynDNSHashIterations, dynDNSKeySize)
+	got, err := pbkdf2.Key(sha256.New, password, salt, DynDNSHashIterations, DynDNSKeySize)
 	if err != nil {
 		return false
 	}
