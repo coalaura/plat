@@ -375,7 +375,7 @@ function recordTypeConfig(type) {
 			fields: [
 				{ key: "flags", label: "Flags", placeholder: "257", required: true, hint: "Commonly 256 (ZSK) or 257 (KSK)." },
 				{ key: "protocol", label: "Protocol", placeholder: "3", required: true, hint: "Must be 3 for DNSSEC." },
-				{ key: "algorithm", label: "Algorithm", placeholder: "13", required: true, hint: "DNSSEC signing algorithm." },
+				{ key: "algorithm", label: "Algorithm", placeholder: "15", required: true, hint: "DNSSEC signing algorithm." },
 				{ key: "publicKey", label: "Public Key", placeholder: "AwEAA...", required: true, hint: "Base64 public key data." },
 			],
 			build: data => `${data.flags} ${data.protocol} ${data.algorithm} ${data.publicKey}`,
@@ -385,7 +385,7 @@ function recordTypeConfig(type) {
 			description: "Delegation Signer digest.",
 			fields: [
 				{ key: "keyTag", label: "Key Tag", placeholder: "2371", required: true, hint: "Key identifier." },
-				{ key: "algorithm", label: "Algorithm", placeholder: "13", required: true, hint: "DNSSEC algorithm number." },
+				{ key: "algorithm", label: "Algorithm", placeholder: "15", required: true, hint: "DNSSEC algorithm number." },
 				{ key: "digestType", label: "Digest Type", placeholder: "2", required: true, hint: "1 SHA-1, 2 SHA-256, 4 SHA-384." },
 				{ key: "digest", label: "Digest", placeholder: "ab12...", required: true, hint: "Hex digest string." },
 			],
@@ -1410,6 +1410,320 @@ function openZoneModal() {
 	});
 }
 
+async function openDNSSECModal() {
+	const zoneId = state.activeZone,
+		zoneName = activeZoneName(),
+		previousFocus = document.activeElement,
+		overlay = make("div", "overlay"),
+		modal = make("div", "modal"),
+		top = make("div", "modal-top"),
+		title = make("h2", "modal-title"),
+		closeButton = make("button", "ghost"),
+		content = make("div", "stack"),
+		feedback = make("p", "field-hint");
+
+	let details, busy = false;
+
+	title.textContent = `DNSSEC — ${zoneName}`;
+	title.id = "dnssec-modal-title";
+
+	modal.setAttribute("role", "dialog");
+	modal.setAttribute("aria-modal", "true");
+	modal.setAttribute("aria-labelledby", title.id);
+
+	feedback.setAttribute("role", "status");
+	feedback.textContent = "Loading DNSSEC details...";
+
+	closeButton.type = "button";
+	closeButton.textContent = "Close";
+
+	top.append(title, closeButton);
+	modal.append(top, content, feedback);
+	overlay.append(modal);
+
+	document.body.append(overlay);
+
+	closeButton.focus();
+
+	const close = () => {
+		if (busy) {
+			return;
+		}
+
+		document.removeEventListener("keydown", onKeydown);
+
+		overlay.remove();
+		previousFocus?.focus();
+	};
+	const onKeydown = event => {
+		if (event.key === "Escape") {
+			close();
+		}
+
+		if (event.key !== "Tab") {
+			return;
+		}
+
+		const controls = [...modal.querySelectorAll("button, input, select, textarea")].filter(control => !control.disabled),
+			first = controls[0], last = controls[controls.length - 1];
+
+		if (event.shiftKey && document.activeElement === first) {
+			event.preventDefault();
+
+			last?.focus();
+		} else if (!event.shiftKey && document.activeElement === last) {
+			event.preventDefault();
+
+			first?.focus();
+		}
+	};
+
+	document.addEventListener("keydown", onKeydown);
+	closeButton.addEventListener("click", close);
+
+	overlay.addEventListener("click", event => {
+		if (event.target === overlay) {
+			close();
+		}
+	});
+
+	const showValue = (label, value, hint = "", multiline = false) => {
+		if (value === undefined || value === null || value === "") {
+			return;
+		}
+
+		const field = make("div", "field"),
+			heading = make("span", "field-title"),
+			row = make("div", "inline-row"),
+			input = make(multiline ? "textarea" : "input", multiline ? "textarea" : "input", "mono", "dnssec-value"),
+			copy = make("button", "ghost");
+
+		heading.textContent = label;
+
+		input.value = String(value);
+		input.readOnly = true;
+		input.setAttribute("aria-label", label);
+
+		if (multiline) {
+			input.rows = 4;
+		} else {
+			input.type = "text";
+		}
+
+		copy.type = "button";
+		copy.textContent = "Copy";
+		copy.setAttribute("aria-label", `Copy ${label}`);
+
+		copy.addEventListener("click", async () => {
+			try {
+				await navigator.clipboard.writeText(input.value);
+
+				feedback.textContent = `${label} copied.`;
+			} catch {
+				input.focus();
+				input.select();
+
+				feedback.textContent = `${label} selected. Use your browser's copy command.`;
+			}
+		});
+
+		row.append(input, copy);
+		field.append(heading, row);
+
+		if (hint) {
+			const description = make("span", "field-hint");
+
+			description.textContent = hint;
+
+			field.append(description);
+		}
+
+		content.append(field);
+	};
+
+	const render = () => {
+		content.replaceChildren();
+
+		const status = make("p", "field-title"),
+			help = make("p", "field-hint"),
+			providerField = make("label", "field"),
+			providerLabel = make("span", "field-title"),
+			provider = make("select", "input"),
+			nameserverField = make("label", "field"),
+			nameserverLabel = make("span", "field-title"),
+			nameservers = make("textarea", "textarea"),
+			removeField = make("label", "checkbox-field"),
+			removed = make("input", "checkbox"),
+			removeLabel = make("span", "field-hint"),
+			footer = make("div", "modal-foot"),
+			save = make("button", "button"),
+			disable = make("button", "ghost", "danger");
+
+		status.textContent = `${details.enabled ? "Enabled" : "Disabled"} · ${details.provider} · ${details.status}`;
+
+		help.textContent = "Plat generates and retains a combined signing key and renews signatures automatically. For public validation, delegate your zone to nameservers serving plat on UDP and TCP port 53, then publish the DS below at your registrar. Signing does not automatically update your registrar or verify delegation.";
+
+		providerLabel.textContent = "Signing provider";
+
+		for (const [value, label] of [["plat", "Plat (recommended)"], ...(!zoneId.startsWith("local-") && state.cloudflare ? [["cloudflare", "Cloudflare"]] : [])]) {
+			const option = make("option");
+
+			option.value = value;
+			option.textContent = label;
+
+			provider.append(option);
+		}
+
+		provider.value = details.provider;
+		provider.disabled = details.configured;
+
+		providerField.append(providerLabel, provider);
+
+		nameserverLabel.textContent = "Plat authoritative nameservers (one per line)";
+		nameservers.rows = 3;
+		nameservers.placeholder = "ns1.example.com\nns2.example.com";
+		nameservers.value = (details.nameservers || []).join("\n");
+
+		if (!nameservers.value && details.provider === "plat") {
+			nameservers.value = state.records.filter(record => record.type === "NS" && record.name === "@").map(record => record.content).join("\n");
+		}
+
+		nameserverField.append(nameserverLabel, nameservers);
+
+		const updateProvider = () => {
+			nameserverField.hidden = provider.value !== "plat";
+			help.textContent = provider.value === "cloudflare"
+				? "Cloudflare generates the keys and signs the zone. Plat relays queries to Cloudflare's authoritative nameservers. Publish Cloudflare's DS at your registrar and keep the delegation pointed to Cloudflare. The API token needs Zone DNS Settings write access."
+				: "Plat generates and retains a combined signing key and renews signatures automatically. For public validation, delegate your zone to nameservers serving plat on UDP and TCP port 53, then publish the DS below at your registrar. Signing does not automatically update your registrar or verify delegation.";
+		};
+
+		provider.addEventListener("change", async () => {
+			if (busy) {
+				return;
+			}
+
+			busy = true;
+
+			closeButton.disabled = true;
+
+			for (const control of content.querySelectorAll("button, input, select, textarea")) {
+				control.disabled = true;
+			}
+
+			feedback.textContent = "Loading provider details...";
+
+			try {
+				details = await api(`/-/${zoneId}/dnssec?provider=${provider.value}`);
+
+				feedback.textContent = "";
+			} catch (err) {
+				feedback.textContent = err.message;
+			} finally {
+				busy = false;
+
+				closeButton.disabled = false;
+
+				if (overlay.isConnected) {
+					render();
+				}
+			}
+		});
+
+		updateProvider();
+
+		content.append(status, help, providerField, nameserverField);
+
+		if (details.ds_record) {
+			showValue("DS Record", details.ds_record, "Publish this in the parent zone through your registrar, not as a record inside this zone.", true);
+			showValue("Digest", details.digest);
+			showValue("Digest Type", details.digest_type, details.digest_type === "2" ? "2 = SHA-256" : "");
+			showValue("Algorithm", details.algorithm, details.algorithm === "15" ? "15 = Ed25519" : details.algorithm === "13" ? "13 = ECDSA P-256 / SHA-256" : "");
+			showValue("Public Key", details.public_key, "", true);
+			showValue("Key Tag", details.key_tag);
+			showValue("Flags", details.flags, "257 = zone signing key + secure entry point (combined signing key). Cloudflare may use separate keys.");
+			showValue("Protocol", details.protocol);
+			showValue("DNSKEY Record", details.dnskey_record, "", true);
+		}
+
+		removed.type = "checkbox";
+
+		removeLabel.textContent = "I removed the parent DS and waited for its cached copies to expire.";
+		removeField.append(removed, removeLabel);
+		removeField.hidden = !details.enabled;
+
+		disable.type = "button";
+		disable.textContent = "Disable DNSSEC";
+		disable.hidden = !details.enabled;
+		disable.disabled = true;
+
+		removed.addEventListener("change", () => {
+			disable.disabled = !removed.checked;
+		});
+
+		save.type = "button";
+		save.textContent = details.enabled ? (details.provider === "cloudflare" ? "Use Cloudflare signing" : "Save nameservers") : "Enable DNSSEC";
+		save.hidden = details.configured && details.provider === "cloudflare";
+
+		const apply = async enabled => {
+			if (busy) {
+				return;
+			}
+
+			busy = true;
+
+			closeButton.disabled = true;
+
+			for (const control of content.querySelectorAll("button, input, select, textarea")) {
+				control.disabled = true;
+			}
+
+			feedback.textContent = "Saving DNSSEC settings...";
+
+			try {
+				details = await api(`/-/${zoneId}/dnssec`, {
+					method: "PUT",
+					body: JSON.stringify({
+						enabled: enabled,
+						provider: provider.value,
+						nameservers: nameservers.value.split(/[\s,]+/).filter(Boolean),
+						parent_ds_removed: removed.checked,
+					}),
+				});
+
+				feedback.textContent = enabled ? "DNSSEC signing enabled. Publish the DS at your registrar once delegation is ready." : "DNSSEC disabled. Plat retains its key for re-enabling.";
+			} catch (err) {
+				feedback.textContent = err.message;
+			} finally {
+				busy = false;
+
+				closeButton.disabled = false;
+
+				if (overlay.isConnected) {
+					render();
+				}
+			}
+		};
+
+		save.addEventListener("click", () => apply(true));
+		disable.addEventListener("click", () => apply(false));
+
+		footer.append(disable, save);
+		content.append(removeField, footer);
+	};
+
+	try {
+		details = await api(`/-/${zoneId}/dnssec`);
+
+		if (overlay.isConnected) {
+			feedback.textContent = "";
+
+			render();
+		}
+	} catch (err) {
+		feedback.textContent = err.message;
+	}
+}
+
 function openRecordModal(currentRecord) {
 	const overlay = make("div", "overlay"),
 		modal = make("div", "modal"),
@@ -2232,6 +2546,7 @@ function createRecords() {
 		title = make("h2", "panel-title"),
 		actions = make("div", "actions"),
 		sync = make("button", "ghost"),
+		dnssec = make("button", "ghost"),
 		add = make("button", "button"),
 		tableWrap = make("div", "table-wrap"),
 		table = make("table", "record-table"),
@@ -2253,13 +2568,19 @@ function createRecords() {
 	add.disabled = !state.activeZone || recordsBusy;
 
 	sync.addEventListener("click", onSyncClick);
+
+	dnssec.type = "button";
+	dnssec.textContent = "DNSSEC";
+	dnssec.disabled = !state.activeZone || recordsBusy;
+
+	dnssec.addEventListener("click", openDNSSECModal);
 	add.addEventListener("click", onNewRecordClick);
 
 	if (state.cloudflare && !activeZoneIsLocal()) {
 		actions.append(sync);
 	}
 
-	actions.append(add);
+	actions.append(dnssec, add);
 
 	top.append(title, actions);
 

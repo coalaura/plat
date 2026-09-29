@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coalaura/etch"
 	"github.com/coalaura/tape"
@@ -19,10 +20,13 @@ import (
 	"github.com/miekg/dns"
 )
 
+const RecordsFile = "data/records.yml"
+
 type Storage struct {
-	mx  sync.RWMutex
-	fx  sync.Mutex
-	dmx sync.RWMutex
+	mx   sync.RWMutex
+	fx   sync.Mutex
+	dmx  sync.RWMutex
+	dsmx sync.Mutex
 
 	client *CloudflareClient
 	logDB  *sql.DB
@@ -48,7 +52,7 @@ func LoadStorage(config *Config) (*Storage, error) {
 		storage.client = NewCloudflareClient(config.Cloudflare.Token)
 	}
 
-	file, err := OpenFileForReading("records.yml")
+	file, err := OpenFileForReading(RecordsFile)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, err
@@ -60,6 +64,11 @@ func LoadStorage(config *Config) (*Storage, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	err = storage.LoadDNSSEC()
+	if err != nil {
+		return nil, err
 	}
 
 	err = storage.LoadDynDNS()
@@ -120,6 +129,9 @@ func (s *Storage) CreateZone(name string) (*Zone, error) {
 }
 
 func (s *Storage) DeleteZone(zoneId string) error {
+	s.dsmx.Lock()
+	defer s.dsmx.Unlock()
+
 	s.dmx.RLock()
 	defer s.dmx.RUnlock()
 
@@ -138,6 +150,16 @@ func (s *Storage) DeleteZone(zoneId string) error {
 		s.mx.Unlock()
 
 		return errLocalZoneNotFound
+	}
+
+	zone.mx.RLock()
+	enabled := zone.dnssec != nil && zone.dnssec.Enabled
+	zone.mx.RUnlock()
+
+	if enabled {
+		s.mx.Unlock()
+
+		return errors.New("disable DNSSEC after removing the parent DS before deleting this zone")
 	}
 
 	delete(s.zones, zoneId)
@@ -231,6 +253,11 @@ func (s *Storage) setRecordLocked(zoneId string, zone *Zone, record *Record) err
 		return err
 	}
 
+	err = zone.validateSignedChange(record, "")
+	if err != nil {
+		return err
+	}
+
 	if s.client != nil && !zone.IsLocal() {
 		if record.ID == "" || isLocalZoneID(record.ID) {
 			previousID := record.ID
@@ -260,6 +287,8 @@ func (s *Storage) setRecordLocked(zoneId string, zone *Zone, record *Record) err
 	}
 
 	zone.Records[record.ID] = record
+	zone.serial = zone.nextSerial()
+	zone.signed = nil
 
 	return nil
 }
@@ -283,6 +312,11 @@ func (s *Storage) UnsetRecord(zoneId, recordId string) error {
 		return errors.New("record not found")
 	}
 
+	err := zone.validateSignedChange(nil, recordId)
+	if err != nil {
+		return err
+	}
+
 	if s.client != nil && !zone.IsLocal() && !isLocalZoneID(recordId) {
 		err := s.client.DeleteRecord(context.Background(), zoneId, recordId)
 		if err != nil {
@@ -291,6 +325,8 @@ func (s *Storage) UnsetRecord(zoneId, recordId string) error {
 	}
 
 	delete(zone.Records, recordId)
+	zone.serial = zone.nextSerial()
+	zone.signed = nil
 
 	return nil
 }
@@ -324,6 +360,7 @@ func (s *Storage) FetchZones() error {
 		if ok {
 			exists.mx.Lock()
 			exists.Name = zone.Name
+			exists.signed = nil
 			exists.mx.Unlock()
 		} else {
 			s.zones[zone.ID] = zone
@@ -365,11 +402,31 @@ func (s *Storage) FetchRecords(zoneId string) error {
 		return err
 	}
 
-	for _, record := range records {
-		record.Update(zone.Name)
+	updated := make(map[string]*Record, len(records))
 
-		zone.Records[record.ID] = record
+	for _, record := range records {
+		err = record.Update(zone.Name)
+		if err != nil {
+			zone.mx.Unlock()
+
+			return err
+		}
+
+		updated[record.ID] = record
 	}
+
+	if zone.dnssec != nil && zone.dnssec.Enabled && zone.dnssec.Provider == "plat" {
+		_, err = buildSignedZone(zone.Name, updated, zone.dnssec, zone.nextSerial(), time.Now())
+		if err != nil {
+			zone.mx.Unlock()
+
+			return err
+		}
+	}
+
+	zone.Records = updated
+	zone.serial = zone.nextSerial()
+	zone.signed = nil
 
 	zone.mx.Unlock()
 
@@ -380,13 +437,15 @@ func (s *Storage) Store() error {
 	s.fx.Lock()
 	defer s.fx.Unlock()
 
-	file, err := OpenFileForWriting("records.tmp")
+	tempPath := RecordsFile + ".tmp"
+
+	file, err := OpenFileForWriting(tempPath)
 	if err != nil {
 		return err
 	}
 
 	defer file.Close()
-	defer os.Remove("records.tmp")
+	defer os.Remove(tempPath)
 
 	s.mx.RLock()
 
@@ -451,7 +510,7 @@ func (s *Storage) Store() error {
 
 	file.Close()
 
-	return os.Rename("records.tmp", "records.yml")
+	return os.Rename(tempPath, RecordsFile)
 }
 
 func (s *Storage) LookupLocal(qName string, qType string) ([]dns.RR, bool, bool) {

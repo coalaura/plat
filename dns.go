@@ -155,27 +155,46 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
 	}
 
 	if len(r.Question) == 0 {
+		msg.Rcode = dns.RcodeFormatError
+
 		return msg
 	}
 
-	question := r.Question[0]
+	if len(r.Question) != 1 || r.Opcode != dns.OpcodeQuery {
+		msg.Rcode = dns.RcodeNotImplemented
 
-	qName := strings.ToLower(strings.TrimSuffix(question.Name, "."))
-	qType := dns.TypeToString[question.Qtype]
+		return msg
+	}
 
-	answers, nameExists, zoneMatched := s.storage.LookupLocal(qName, qType)
+	if r.Question[0].Qclass != dns.ClassINET {
+		msg.Rcode = dns.RcodeRefused
+
+		return msg
+	}
+
+	option := r.IsEdns0()
+	if option != nil && option.Version() != 0 {
+		msg.SetEdns0(1232, option.Do())
+
+		msg.Rcode = dns.RcodeBadVers
+
+		return msg
+	}
+
+	local, zoneMatched, err := s.storage.LookupDNS(r)
 	if zoneMatched {
-		if len(answers) > 0 {
-			msg.Answer = answers
-			msg.Rcode = dns.RcodeSuccess
-		} else if nameExists {
-			msg.Rcode = dns.RcodeSuccess
-		} else {
-			msg.Rcode = dns.RcodeNameError
+		if err != nil {
+			log.Warnf("DNS authoritative response failed: %v", err)
+
+			msg.Rcode = dns.RcodeServerFailure
+
+			return msg
 		}
 
-		return msg
+		return local
 	}
+
+	msg.Authoritative = false
 
 	if s.fallbackHTTPS != "" {
 		in, err := s.ExchangeDoH(r)
@@ -204,6 +223,17 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
 
 func (s *DNSServer) HandleDNSMessage(w dns.ResponseWriter, r *dns.Msg) {
 	resp := s.ProcessQuery(r)
+
+	if _, udp := w.RemoteAddr().(*net.UDPAddr); udp {
+		size := 512
+
+		option := r.IsEdns0()
+		if option != nil {
+			size = int(min(max(option.UDPSize(), 512), 1232))
+		}
+
+		resp.Truncate(size)
+	}
 
 	w.WriteMsg(resp)
 }

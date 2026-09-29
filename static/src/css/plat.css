@@ -3,6 +3,7 @@
 }
 
 :root[data-theme="dark"] {
+	color-scheme: dark;
 	--bg: #0a0d11;
 	--bg-elevated: #11151b;
 	--bg-soft: #161b22;
@@ -23,6 +24,7 @@
 }
 
 :root[data-theme="light"] {
+	color-scheme: light;
 	--bg: #f4f4f1;
 	--bg-elevated: #fcfcfa;
 	--bg-soft: #f3f5f8;
@@ -44,6 +46,10 @@
 
 * {
 	box-sizing: border-box;
+}
+
+[hidden] {
+	display: none !important;
 }
 
 html,
@@ -687,7 +693,8 @@ button:disabled {
 	color: var(--ink-muted);
 }
 
-.input {
+.input,
+.textarea {
 	border: 1px solid var(--line-strong);
 	border-radius: var(--radius);
 	padding: 7px 8px;
@@ -695,16 +702,69 @@ button:disabled {
 	min-width: 0;
 }
 
-.input:focus {
+.input:focus,
+.textarea:focus {
 	outline: none;
 	border-color: var(--accent);
 	box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.input::placeholder,
+.textarea::placeholder {
+	color: var(--ink-muted);
+	opacity: 1;
 }
 
 .textarea {
 	resize: vertical;
 	font-family: "IBM Plex Mono", monospace;
 	font-size: 0.84rem;
+	line-height: 1.5;
+	min-height: 4rem;
+	height: 5rem;
+}
+
+.textarea.dnssec-value {
+	min-height: 3.5rem;
+	height: 3.5rem;
+}
+
+.textarea.dnssec-value[readonly] {
+	resize: none;
+}
+
+.checkbox-field {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr);
+	align-items: start;
+	gap: 10px;
+	padding: 10px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg-soft);
+	cursor: pointer;
+}
+
+.checkbox-field .field-hint {
+	line-height: 1.5;
+}
+
+.checkbox {
+	width: 16px;
+	height: 16px;
+	margin: 2px 0 0;
+	accent-color: var(--accent);
+	cursor: pointer;
+}
+
+.checkbox:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 3px;
+}
+
+.checkbox:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
 }
 
 .login {
@@ -750,6 +810,12 @@ button:disabled {
 	font-size: 1rem;
 	text-transform: uppercase;
 	letter-spacing: 0.08em;
+}
+
+.dnssec-value {
+	flex: 1;
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 
 .record-form {

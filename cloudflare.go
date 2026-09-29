@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/cloudflare/cloudflare-go/v7"
@@ -12,14 +13,6 @@ import (
 
 type CloudflareClient struct {
 	client *cloudflare.Client
-}
-
-func NewCloudflareClient(token string) *CloudflareClient {
-	client := cloudflare.NewClient(option.WithAPIToken(token))
-
-	return &CloudflareClient{
-		client: client,
-	}
 }
 
 func (c *CloudflareClient) ListZones(ctx context.Context) ([]*Zone, error) {
@@ -140,4 +133,73 @@ func (c *CloudflareClient) DeleteRecord(ctx context.Context, zoneId, recordId st
 	})
 
 	return err
+}
+
+func (c *CloudflareClient) GetDNSSEC(ctx context.Context, zoneID string) (DNSSECDetails, error) {
+	result, err := c.client.DNS.DNSSEC.Get(ctx, dns.DNSSECGetParams{ZoneID: cloudflare.F(zoneID)})
+	if err != nil {
+		return DNSSECDetails{}, err
+	}
+
+	return asCloudflareDNSSECDetails(result), nil
+}
+
+func (c *CloudflareClient) SetDNSSEC(ctx context.Context, zoneID string, enabled bool) (DNSSECDetails, error) {
+	status := dns.DNSSECEditParamsStatusDisabled
+
+	if enabled {
+		status = dns.DNSSECEditParamsStatusActive
+	}
+
+	result, err := c.client.DNS.DNSSEC.Edit(ctx, dns.DNSSECEditParams{
+		ZoneID: cloudflare.F(zoneID), Status: cloudflare.F(status),
+	})
+
+	if err != nil {
+		return DNSSECDetails{}, err
+	}
+
+	return asCloudflareDNSSECDetails(result), nil
+}
+
+func (c *CloudflareClient) DNSSECNameservers(ctx context.Context, zoneID string) ([]string, error) {
+	zone, err := c.client.Zones.Get(ctx, zones.ZoneGetParams{ZoneID: cloudflare.F(zoneID)})
+	if err != nil {
+		return nil, err
+	}
+
+	nameservers, err := normalizeNameservers(zone.NameServers)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(nameservers) == 0 {
+		return nil, fmt.Errorf("cloudflare did not provide authoritative nameservers")
+	}
+
+	return nameservers, nil
+}
+
+func NewCloudflareClient(token string) *CloudflareClient {
+	client := cloudflare.NewClient(option.WithAPIToken(token))
+
+	return &CloudflareClient{client: client}
+}
+
+func asCloudflareDNSSECDetails(result *dns.DNSSEC) DNSSECDetails {
+	details := DNSSECDetails{
+		Provider:   "cloudflare",
+		Enabled:    result.Status == dns.DNSSECStatusActive || result.Status == dns.DNSSECStatusPending,
+		Status:     string(result.Status),
+		DSRecord:   result.DS,
+		Digest:     result.Digest,
+		DigestType: result.DigestType,
+		Algorithm:  result.Algorithm,
+		PublicKey:  result.PublicKey,
+		KeyTag:     uint16(result.KeyTag),
+		Flags:      uint16(result.Flags),
+		Protocol:   3,
+	}
+
+	return details
 }

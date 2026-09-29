@@ -1,7 +1,4 @@
 config.yml
-records.yml
 plat
 plat.exe
-dyndns-logs.db
-dyndns-logs.db-wal
-dyndns-logs.db-shm
+data

@@ -1,6 +1,0 @@
-- username: test
-  password: pbkdf2-sha256$600000$oK7/FOGga+vu6nfZoeoX1g$a2v+z98WVWpMc7At+PcvQ1y4aXf1fjUXsICzCmIdXOw
-  records:
-  - zone: 612c2770974b04498a046f72264c31c2
-    type: A
-    name: home
