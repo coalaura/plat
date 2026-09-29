@@ -485,28 +485,49 @@ textarea {
 	width: 235px;
 }
 
-.dyndns-log-modal {
+.modal.dyndns-log-modal {
 	width: min(1080px, 100%);
+	min-width: 0;
 	display: grid;
+	grid-template-rows: auto auto minmax(0, 1fr);
 	gap: 12px;
+	overflow: hidden;
+}
+
+.dyndns-log-modal .modal-top {
+	flex-wrap: wrap;
+}
+
+.dyndns-log-modal .modal-title {
+	min-width: 0;
+	overflow-wrap: anywhere;
 }
 
 .dyndns-log-modal .empty {
 	margin: 0;
 }
 
-.dyndns-log-table {
-	min-width: 940px;
+.dyndns-log-content {
+	min-height: 0;
+	overflow: auto;
 }
 
-.dyndns-log-table th:last-child,
-.dyndns-log-table td:last-child {
-	width: 20%;
+.dyndns-log-content .table-wrap {
+	overflow: visible;
 }
 
-.dyndns-log-table td:last-child {
+.record-table.dyndns-log-table {
+	min-width: 0;
+}
+
+.record-table.dyndns-log-table th,
+.record-table.dyndns-log-table td {
 	white-space: normal;
 	overflow-wrap: anywhere;
+}
+
+.dyndns-log-time {
+	display: block;
 }
 
 .actions {
@@ -979,6 +1000,37 @@ button:disabled {
 }
 
 @media (max-width: 760px) {
+	.dyndns-log-table thead {
+		display: none;
+	}
+
+	.dyndns-log-table,
+	.dyndns-log-table tbody,
+	.dyndns-log-table tr {
+		display: block;
+	}
+
+	.dyndns-log-table tr + tr {
+		border-top: 1px solid var(--line-strong);
+	}
+
+	.record-table.dyndns-log-table td {
+		display: grid;
+		grid-template-columns: 80px minmax(0, 1fr);
+		gap: 12px;
+		border-bottom: 0;
+	}
+
+	.dyndns-log-table td::before {
+		content: attr(data-label);
+		color: var(--ink-muted);
+		font-family: "Space Grotesk", sans-serif;
+		font-size: 0.78rem;
+		font-weight: 600;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+	}
+
 	#app {
 		padding: 12px;
 	}

@@ -2171,7 +2171,7 @@ function openDynDNSLogsModal(user) {
 		refresh = make("button", "ghost"),
 		closeButton = make("button", "ghost"),
 		note = make("p", "empty"),
-		content = make("div");
+		content = make("div", "dyndns-log-content");
 
 	title.textContent = `DynDNS logs: ${user.username}`;
 	refresh.type = "button";
@@ -2206,28 +2206,52 @@ function openDynDNSLogsModal(user) {
 				table = make("table", "record-table", "dyndns-log-table"),
 				head = make("thead"),
 				headRow = make("tr"),
-				body = make("tbody");
+				body = make("tbody"),
+				labels = ["Time", "Hostname", "Address", "Source", "Result", "Details"];
 
-			for (const label of ["Time", "Hostname", "Address", "Source", "Result", "Details"]) {
+			for (const label of labels) {
 				const cell = make("th");
 
+				cell.scope = "col";
 				cell.textContent = label;
+
 				headRow.append(cell);
 			}
 
 			for (let index = logs.length - 1; index >= 0; index--) {
 				const entry = logs[index],
 					row = make("tr"),
-					time = new Date(entry.time);
+					time = new Date(entry.time),
+					timeCell = createCell(entry.time);
+
+				if (!Number.isNaN(time.getTime())) {
+					const timestamp = make("time"),
+						date = make("span", "dyndns-log-time"),
+						clock = make("span", "dyndns-log-time");
+
+					timestamp.dateTime = time.toISOString();
+
+					date.textContent = time.toLocaleDateString();
+
+					clock.textContent = time.toLocaleTimeString();
+
+					timestamp.append(date, clock);
+
+					timeCell.replaceChildren(timestamp);
+				}
 
 				row.append(
-					createCell(Number.isNaN(time.getTime()) ? entry.time : time.toLocaleString()),
+					timeCell,
 					createCell(entry.hostname || "--", ["mono"]),
 					createCell(entry.address || "--", ["mono"]),
 					createCell(entry.source || "--", ["mono"]),
 					createCell(entry.result),
 					createCell(entry.error || "--")
 				);
+
+				for (let column = 0; column < labels.length; column++) {
+					row.children[column].dataset.label = labels[column];
+				}
 
 				body.append(row);
 			}
