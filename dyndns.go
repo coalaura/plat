@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	DynDNSFile = "dyndns.yml"
+	DynDNSFile = "data/dyndns.yml"
 
 	DynDNSHashIterations = 600000
 	DynDNSSaltSize       = 16
