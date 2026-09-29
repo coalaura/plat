@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -523,32 +524,60 @@ func (r Record) ToCloudflare() (any, error) {
 }
 
 func FormatRecordResponse(resp dns.RecordResponse) (string, error) {
-	switch u := resp.AsUnion().(type) {
-	case dns.RecordResponseARecord:
-		return u.Content, nil
-	case dns.RecordResponseAAAARecord:
-		return u.Content, nil
-	case dns.RecordResponseCNAMERecord:
-		return u.Content, nil
-	case dns.RecordResponseMXRecord:
+	var record dns.RecordResponseUnion
+
+	switch resp.Type {
+	case "A", "AAAA", "CNAME", "NS", "OPENPGPKEY", "PTR", "LOC":
+		return resp.Content, nil
+	case "TXT":
+		return formatTXT(resp.Content), nil
+	case "MX":
+		record = &dns.RecordResponseMXRecord{}
+	case "CAA":
+		record = &dns.RecordResponseCAARecord{}
+	case "CERT":
+		record = &dns.RecordResponseCERTRecord{}
+	case "DNSKEY":
+		record = &dns.RecordResponseDNSKEYRecord{}
+	case "DS":
+		record = &dns.RecordResponseDSRecord{}
+	case "HTTPS":
+		record = &dns.RecordResponseHTTPSRecord{}
+	case "NAPTR":
+		record = &dns.RecordResponseNAPTRRecord{}
+	case "SMIMEA":
+		record = &dns.RecordResponseSMIMEARecord{}
+	case "SRV":
+		record = &dns.RecordResponseSRVRecord{}
+	case "SSHFP":
+		record = &dns.RecordResponseSSHFPRecord{}
+	case "SVCB":
+		record = &dns.RecordResponseSVCBRecord{}
+	case "TLSA":
+		record = &dns.RecordResponseTLSARecord{}
+	case "URI":
+		record = &dns.RecordResponseURIRecord{}
+	default:
+		return "", fmt.Errorf("unknown record type %q", resp.Type)
+	}
+
+	err := json.Unmarshal([]byte(resp.JSON.RawJSON()), record)
+	if err != nil {
+		return "", fmt.Errorf("decode Cloudflare %s record: %w", resp.Type, err)
+	}
+
+	switch u := record.(type) {
+	case *dns.RecordResponseMXRecord:
 		return fmt.Sprintf("%.0f %s", u.Priority, u.Content), nil
-	case dns.RecordResponseNSRecord:
-		return u.Content, nil
-	case dns.RecordResponseOpenpgpkeyRecord:
-		return u.Content, nil
-	case dns.RecordResponsePTRRecord:
-		return u.Content, nil
-	case dns.RecordResponseTXTRecord:
-		return formatTXT(u.Content), nil
-	case dns.RecordResponseCAARecord:
+	case *dns.RecordResponseCAARecord:
 		return fmt.Sprintf("%.0f %s %q", u.Data.Flags, u.Data.Tag, u.Data.Value), nil
-	case dns.RecordResponseCERTRecord:
+	case *dns.RecordResponseCERTRecord:
 		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Type, u.Data.KeyTag, u.Data.Algorithm, u.Data.Certificate), nil
-	case dns.RecordResponseDNSKEYRecord:
+	case *dns.RecordResponseDNSKEYRecord:
 		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Flags, u.Data.Protocol, u.Data.Algorithm, u.Data.PublicKey), nil
-	case dns.RecordResponseDSRecord:
+	case *dns.RecordResponseDSRecord:
 		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.KeyTag, u.Data.Algorithm, u.Data.DigestType, u.Data.Digest), nil
-	case dns.RecordResponseHTTPSRecord:
+	case *dns.RecordResponseHTTPSRecord:
 		target := u.Data.Target
 		if target == "" {
 			target = "."
@@ -559,17 +588,15 @@ func FormatRecordResponse(resp dns.RecordResponse) (string, error) {
 		}
 
 		return fmt.Sprintf("%.0f %s", u.Data.Priority, target), nil
-	case dns.RecordResponseLOCRecord:
-		return u.Content, nil
-	case dns.RecordResponseNAPTRRecord:
+	case *dns.RecordResponseNAPTRRecord:
 		return fmt.Sprintf("%.0f %.0f %q %q %q %s", u.Data.Order, u.Data.Preference, u.Data.Flags, u.Data.Service, u.Data.Regex, u.Data.Replacement), nil
-	case dns.RecordResponseSMIMEARecord:
+	case *dns.RecordResponseSMIMEARecord:
 		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate), nil
-	case dns.RecordResponseSRVRecord:
+	case *dns.RecordResponseSRVRecord:
 		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Priority, u.Data.Weight, u.Data.Port, u.Data.Target), nil
-	case dns.RecordResponseSSHFPRecord:
+	case *dns.RecordResponseSSHFPRecord:
 		return fmt.Sprintf("%.0f %.0f %s", u.Data.Algorithm, u.Data.Type, u.Data.Fingerprint), nil
-	case dns.RecordResponseSVCBRecord:
+	case *dns.RecordResponseSVCBRecord:
 		target := u.Data.Target
 		if target == "" {
 			target = "."
@@ -580,9 +607,9 @@ func FormatRecordResponse(resp dns.RecordResponse) (string, error) {
 		}
 
 		return fmt.Sprintf("%.0f %s", u.Data.Priority, target), nil
-	case dns.RecordResponseTLSARecord:
+	case *dns.RecordResponseTLSARecord:
 		return fmt.Sprintf("%.0f %.0f %.0f %s", u.Data.Usage, u.Data.Selector, u.Data.MatchingType, u.Data.Certificate), nil
-	case dns.RecordResponseURIRecord:
+	case *dns.RecordResponseURIRecord:
 		return fmt.Sprintf("%.0f %.0f %q", u.Priority, u.Data.Weight, u.Data.Target), nil
 	}
 
