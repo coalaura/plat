@@ -13,7 +13,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest
     strategy:
       matrix:
         include:
@@ -95,7 +95,7 @@ jobs:
 
   release:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: avrea-ubuntu-latest
     steps:
     - name: Download Artifacts
       uses: actions/download-artifact@v8
