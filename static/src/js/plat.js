@@ -951,7 +951,12 @@ async function loadZone(zone) {
 
 	state.loadingRecords = true;
 
-	renderZones();
+	if (zoneChanged) {
+		renderZones();
+	} else {
+		updateZoneSelectionAvailability();
+	}
+
 	renderRecords();
 
 	try {
@@ -965,7 +970,7 @@ async function loadZone(zone) {
 	} finally {
 		state.loadingRecords = false;
 
-		renderZones();
+		updateZoneSelectionAvailability();
 		renderRecords();
 
 		setActiveZoneSelection(zoneChanged);
@@ -2390,7 +2395,7 @@ function createZones() {
 		const button = make("button", "zone-item", zoneId === state.activeZone ? "active" : "");
 
 		button.type = "button";
-		button.disabled = state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId) || isUiLocked();
+		button.disabled = zoneSelectionIsBusy();
 		button.dataset.zoneId = zoneId;
 		button.textContent = zoneDisplay(zoneName);
 		button.title = `${zoneDisplay(zoneName)} (${zoneId})`;
@@ -2400,6 +2405,24 @@ function createZones() {
 	}
 
 	return panel;
+}
+
+function zoneSelectionIsBusy() {
+	return state.loadingRecords || state.syncingRecords || state.savingRecord || Boolean(state.deletingRecordId) || isUiLocked();
+}
+
+function updateZoneSelectionAvailability() {
+	if (!ui.zonesSlot) {
+		return;
+	}
+
+	const disabled = zoneSelectionIsBusy();
+
+	for (const button of ui.zonesSlot.querySelectorAll(".zone-item")) {
+		if (button.disabled !== disabled) {
+			button.disabled = disabled;
+		}
+	}
 }
 
 function setActiveZoneSelection(ensureVisible = false) {
@@ -2794,13 +2817,15 @@ function openEmailProtectionModal() {
 			feedback.textContent = err.message;
 			feedback.hidden = false;
 		} finally {
-			if (state.activeZone === zoneID) {
-				await loadZone(zoneID);
-			}
-
 			state.savingRecord = false;
 
-			renderRecords();
+			if (state.activeZone === zoneID) {
+				await loadZone(zoneID);
+			} else {
+				updateZoneSelectionAvailability();
+
+				renderRecords();
+			}
 
 			busy = false;
 
