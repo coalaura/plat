@@ -6,7 +6,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   project_name: plat
@@ -56,9 +56,7 @@ jobs:
         cgo: true
         output: bin/${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         go-flags: |
-          -trimpath
-          -buildvcs=false
-          -ldflags=-s -w -X main.Version=${{ github.ref_name }}
+          -ldflags=-X main.Version=${{ github.ref_name }}
 
     - name: Sign
       id: sign
@@ -71,43 +69,98 @@ jobs:
           https://wiese2.org/pki/issuing.pem
           https://wiese2.org/pki/root.pem
 
+    - name: Build Slave
+      id: slave
+      uses: coalaura/build@v1
+      with:
+        os: ${{ matrix.goos }}
+        arch: ${{ matrix.goarch }}
+        generate: false
+        package: ./cmd/slave
+        output: bin/plat-slave-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+        go-flags: |
+          -ldflags=-X main.Version=${{ github.ref_name }}
+
+    - name: Sign Slave
+      id: sign-slave
+      uses: coalaura/sign@v1
+      with:
+        path: ${{ steps.slave.outputs.path }}
+        key: ${{ secrets.COALAURA_PFX }}
+        passphrase: ${{ secrets.COALAURA_PFX_PASSWORD }}
+        chain: |
+          https://wiese2.org/pki/issuing.pem
+          https://wiese2.org/pki/root.pem
+
     - name: Package Archive
       shell: bash
       env:
         SIGNED_BINARY: ${{ steps.sign.outputs.path }}
+        SLAVE_BINARY: ${{ steps.sign-slave.outputs.path }}
       run: |
         cp -r public bin/public
         cd bin
         BINARY="$(basename "$SIGNED_BINARY")"
+        SLAVE="$(basename "$SLAVE_BINARY")"
         if [[ "${{ matrix.goos }}" == "windows" ]]; then
-          zip -r "${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$BINARY" public
+          zip -r "${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.zip" "$BINARY" "$SLAVE" public
         else
-          tar czf "${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$BINARY" public
+          tar czf "${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" "$BINARY" "$SLAVE" public
         fi
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: ${{ env.project_name }}_${{ matrix.goos }}_${{ matrix.goarch }}
+        name: signed-${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
+        if-no-files-found: error
         path: |
+          ${{ steps.sign.outputs.path }}
+          ${{ steps.sign-slave.outputs.path }}
           bin/*.tar.gz
           bin/*.zip
 
   release:
     needs: build
     runs-on: avrea-ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
     - name: Download Artifacts
       uses: actions/download-artifact@v8
       with:
-        pattern: ${{ env.project_name }}_*
+        pattern: signed-${{ env.project_name }}-*
         path: bin
         merge-multiple: true
+
+    - name: Checksums
+      working-directory: bin
+      shell: bash
+      run: |
+        for project in plat plat-slave; do
+          for os in linux windows darwin; do
+            for arch in amd64 arm64; do
+              binary="$project-$os-$arch"
+              if [[ "$os" == "windows" ]]; then binary="$binary.exe"; fi
+              sha256sum -b "$binary"
+            done
+          done
+        done > SHA256SUMS
+
+    - name: Attest Signed Binaries
+      uses: actions/attest@v4
+      with:
+        subject-checksums: bin/SHA256SUMS
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v3
       with:
         files: bin/*
+        fail_on_unmatched_files: true
+        generate_release_notes: true
+        prerelease: ${{ contains(github.ref_name, '-') }}
         name: "Release ${{ github.ref_name }}"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

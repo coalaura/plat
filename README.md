@@ -60,13 +60,17 @@ For public DNSSEC, configure your registrar's nameserver delegation to point to 
 
 Plat supplies the configured apex NS records and generates an SOA when none is present. Generated DNSSEC records are served automatically rather than inserted into the editable records table. Imported records continue using Cloudflare's existing edit/sync behavior, while plat supplies its own signatures when selected as signer.
 
-Keys and per-zone settings are saved separately in `dnssec.yml`, with owner-only file permissions where supported and excluded from Git. Back up this file together with `records.yml`; losing the private key requires a new key and a parent DS change. Signatures have a 14-day validity period and refresh on demand after 24 hours, including after a period without queries. Record edits, deletions, DynDNS updates and Cloudflare sync invalidate the signed snapshot immediately. The signing key remains stable across restarts and disable/re-enable cycles so the parent DS remains stable; key rollover requires coordination with the parent zone.
+Keys and per-zone settings are saved atomically with records in `data/records.yml`, with owner-only file permissions where supported and excluded from Git. Existing `data/dnssec.yml` settings are loaded compatibly and migrated with committed records; include both files in backups while upgrading. Losing the private key requires a new key and a parent DS change. Signatures have a 14-day validity period and refresh on demand after 24 hours, including after a period without queries. Record edits, deletions, DynDNS updates and Cloudflare sync invalidate the signed snapshot immediately. Signature renewal does not change the authoritative SOA serial. The signing key remains stable across restarts and disable/re-enable cycles so the parent DS remains stable; key rollover requires coordination with the parent zone.
 
 For a connected Cloudflare zone, choose **Cloudflare** to inspect existing Cloudflare DNSSEC, enable it and copy its registrar values. The Cloudflare API token needs **Zone DNS Settings: Read/Write** and access to the zone. Cloudflare manages its own signing keys; plat relays queries for a Cloudflare-signed zone to Cloudflare's authoritative nameservers. Keep the public delegation pointed to Cloudflare in this mode.
 
 Before disabling DNSSEC, remove the parent DS and allow its cached copies to expire, then confirm this in the modal. Disable the current provider before switching providers or deleting a signed local zone. Plat retains its key when disabled.
 
 Authenticated management endpoints are `GET /-/{zone}/dnssec` and `PUT /-/{zone}/dnssec`. GET accepts `?provider=plat` or `?provider=cloudflare` to inspect a provider. PUT accepts `enabled`, `provider`, `nameservers` and `parent_ds_removed`; private signing keys are never returned by the API.
+
+## Clustering
+
+Use the separate `plat-slave` binary for read-only DNS replicas with their own HTTPS termination. Each binary generates its own certificates and private keys on first start; authorize replication by exchanging only the public certificates. Replication shares the master's existing HTTP/HTTPS port through an end-to-end authenticated WebSocket tunnel, so no extra replication port or firewall rule is needed. See [master/slave setup](docs/clustering.md) for the first-run steps, configuration, checkpoint recovery and asynchronous replication guarantees. Existing standalone deployments require no cluster configuration.
 
 ## License
 

@@ -1,7 +1,8 @@
-package main
+package storage
 
 import (
 	"fmt"
+	"plat/internal/dnssec"
 	"strings"
 	"time"
 
@@ -33,8 +34,9 @@ func (s *Storage) LookupDNS(request *dns.Msg) (*dns.Msg, bool, error) {
 		return nil, false, nil
 	}
 
-	matched.mx.Lock()
 	s.mx.RUnlock()
+
+	matched.mx.Lock()
 
 	config := matched.dnssec
 	if config != nil && config.Enabled && config.Provider == "cloudflare" {
@@ -48,26 +50,20 @@ func (s *Storage) LookupDNS(request *dns.Msg) (*dns.Msg, bool, error) {
 	if config != nil && config.Enabled {
 		now := time.Now()
 		if matched.signed == nil || !now.Before(matched.signed.RenewAt) {
-			serial := matched.serial
-			if serial == 0 || matched.signed != nil {
-				serial = matched.nextSerial()
-			}
-
-			snapshot, err := buildSignedZone(matched.Name, matched.Records, config, serial, now)
+			snapshot, err := buildSignedZone(matched.Name, matched.Records, config, matched.serial, now)
 			if err != nil {
 				matched.mx.Unlock()
 
 				return nil, true, err
 			}
 
-			matched.serial = snapshot.Nodes[snapshot.Name].Sets[dns.TypeSOA].Records[0].(*dns.SOA).Serial
 			matched.signed = snapshot
 		}
 
 		snapshot := matched.signed
 		matched.mx.Unlock()
 
-		return snapshot.answer(request), true, nil
+		return snapshot.Answer(request), true, nil
 	}
 
 	message := new(dns.Msg)
@@ -140,26 +136,5 @@ func exchangeCloudflareDNS(request *dns.Msg, nameservers []string) (*dns.Msg, er
 }
 
 func canonicalQueryName(name string) string {
-	name = strings.ToLower(dns.Fqdn(name))
-	if !strings.ContainsRune(name, '\\') {
-		return name
-	}
-
-	var wire [256]byte
-
-	_, err := dns.PackDomainName(name, wire[:], 0, nil, false)
-	if err != nil {
-		return name
-	}
-
-	for index, character := range wire {
-		wire[index] = lowerDNSByte(character)
-	}
-
-	normalized, _, err := dns.UnpackDomainName(wire[:], 0)
-	if err != nil {
-		return name
-	}
-
-	return normalized
+	return dnssec.CanonicalQueryName(name)
 }

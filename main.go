@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	_ "embed"
 	"errors"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"plat/internal/replication"
 
 	"github.com/coalaura/plain"
 	"github.com/go-chi/chi/v5"
@@ -22,14 +24,24 @@ func main() {
 	config, err := LoadConfig()
 	log.MustFail(err)
 
+	err = config.Cluster.Prepare()
+	log.MustFail(err)
+
+	if config.Cluster.TLS.CA == "" {
+		log.Printf("Replication identity: %s; copy slave certificates into %s and restart to authorize them", config.Cluster.TLS.Certificate, config.Cluster.TrustedClients)
+	}
+
 	log.Println("Loading storage...")
 
 	storage, err := LoadStorage(config)
 	log.MustFail(err)
 
-	defer storage.logDB.Close()
+	defer storage.Close()
 
-	if storage.client != nil {
+	clusterContext, stopCluster := context.WithCancel(context.Background())
+	defer stopCluster()
+
+	if storage.Client() != nil {
 		log.Println("Fetching zones from Cloudflare...")
 
 		err = storage.FetchZones()
@@ -78,6 +90,18 @@ func main() {
 
 	r.Handle("/*", frontend(config))
 
+	if config.Cluster.Enabled {
+		settings, tlsErr := config.Cluster.TLSConfig()
+		log.MustFail(tlsErr)
+
+		master := &replication.Master{Storage: storage, TLS: settings}
+		handler, handlerErr := master.HTTPHandler(clusterContext)
+		log.MustFail(handlerErr)
+
+		r.Handle(replication.EndpointPath, handler)
+		log.Printf("Replication available at %s on the HTTP listener", replication.EndpointPath)
+	}
+
 	r.Get("/nic/update", HandleDynDNSUpdate(storage))
 
 	r.Get("/-/info", func(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +116,7 @@ func main() {
 
 		okay(w, map[string]any{
 			"authenticated": authenticated,
-			"cloudflare":    storage.client != nil,
+			"cloudflare":    storage.Client() != nil,
 			"zones":         zones,
 		})
 	})

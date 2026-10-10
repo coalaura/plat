@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"crypto/pbkdf2"
@@ -177,19 +177,13 @@ func (s *Storage) AuthenticateDynDNS(username, password string) (DynDNSUser, boo
 }
 
 func (s *Storage) UpdateDynDNSRecord(assignment DynDNSRecord, address string) (bool, error) {
-	s.mx.RLock()
+	s.commitMu.Lock()
+	defer s.commitMu.Unlock()
 
-	zone, exists := s.zones[assignment.Zone]
-	if !exists {
-		s.mx.RUnlock()
-
+	zone := cloneZone(s.zones[assignment.Zone])
+	if zone == nil {
 		return false, errors.New("assigned zone not found")
 	}
-
-	zone.mx.Lock()
-	defer zone.mx.Unlock()
-
-	s.mx.RUnlock()
 
 	matches := make([]*Record, 0, 1)
 

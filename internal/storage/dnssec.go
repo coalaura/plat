@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"plat/internal/dnssec"
 	"strconv"
 	"strings"
 	"time"
@@ -24,14 +26,14 @@ const (
 	DNSSECRenewal  = 24 * time.Hour
 )
 
-// Keys are stored separately from editable records and never serialized to the API.
-// Configurations are immutable after publication under the zone mutex.
+// Keys are part of the durable authoritative state, but never included in management API responses.
+// Configurations are immutable after publication.
 type DNSSECConfig struct {
-	Enabled     bool     `yaml:"enabled"`
-	Provider    string   `yaml:"provider"`
-	Nameservers []string `yaml:"nameservers,omitempty"`
-	DNSKEY      string   `yaml:"dnskey,omitempty"`
-	PrivateKey  string   `yaml:"private_key,omitempty"`
+	Enabled     bool     `yaml:"enabled" json:"enabled"`
+	Provider    string   `yaml:"provider" json:"provider"`
+	Nameservers []string `yaml:"nameservers,omitempty" json:"nameservers,omitempty"`
+	DNSKEY      string   `yaml:"dnskey,omitempty" json:"dnskey,omitempty"`
+	PrivateKey  string   `yaml:"private_key,omitempty" json:"private_key,omitempty"`
 	signer      crypto.Signer
 	key         *dns.DNSKEY
 }
@@ -60,8 +62,24 @@ type DNSSECRequest struct {
 	ParentDSRemoved bool     `json:"parent_ds_removed"`
 }
 
+type SignedZone = dnssec.SignedZone
+
 func (s *Storage) LoadDNSSEC() error {
-	file, err := OpenFileForReading(DNSSECPath)
+	legacy := false
+
+	for _, zone := range s.zones {
+		if zone == nil {
+			return errors.New("nil saved zone")
+		}
+
+		legacy = legacy || zone.state == nil
+	}
+
+	if !legacy {
+		return nil
+	}
+
+	file, err := os.Open(filepath.Join(filepath.Dir(s.path), "dnssec.yml"))
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -79,9 +97,14 @@ func (s *Storage) LoadDNSSEC() error {
 		return fmt.Errorf("load DNSSEC: %w", err)
 	}
 
-	for id, config := range configurations {
-		zone, exists := s.zones[id]
-		if !exists {
+	for id, zone := range s.zones {
+		config := zone.dnssec
+
+		if zone.state == nil {
+			config = configurations[id]
+		}
+
+		if config == nil {
 			continue
 		}
 
@@ -120,11 +143,7 @@ func (s *Storage) DNSSECDetails(ctx context.Context, id, provider string) (DNSSE
 		return DNSSECDetails{}, errLocalZoneNotFound
 	}
 
-	zone.mx.RLock()
-
 	config := zone.dnssec
-
-	zone.mx.RUnlock()
 	s.mx.RUnlock()
 
 	if provider == "cloudflare" || (provider == "" && config != nil && config.Provider == "cloudflare") {
@@ -159,14 +178,15 @@ func (s *Storage) DNSSECDetails(ctx context.Context, id, provider string) (DNSSE
 }
 
 func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSECRequest) (DNSSECDetails, error) {
-	s.dsmx.Lock()
-	defer s.dsmx.Unlock()
+	s.commitMu.Lock()
+	defer s.commitMu.Unlock()
 
-	s.mx.RLock()
-	zone, exists := s.zones[id]
-	s.mx.RUnlock()
+	if s.readOnly {
+		return DNSSECDetails{}, ErrReadOnly
+	}
 
-	if !exists {
+	zone := cloneZone(s.zones[id])
+	if zone == nil {
 		return DNSSECDetails{}, errLocalZoneNotFound
 	}
 
@@ -247,15 +267,6 @@ func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSEC
 		}
 	}
 
-	// Serialize record edits through the transition, including durable persistence.
-	// storeDNSSEC takes no zone locks; its snapshot is captured before this lock.
-	configurations := s.dnssecSnapshot()
-
-	configurations[id] = config
-
-	zone.mx.Lock()
-	defer zone.mx.Unlock()
-
 	if config.Enabled && config.Provider == "plat" {
 		var snapshot *SignedZone
 
@@ -274,15 +285,15 @@ func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSEC
 		}
 	}
 
-	err = storeDNSSEC(configurations)
+	zone.dnssec = config
+	zone.signed = nil
+
+	err = s.commitZone(id, zone, Event{Kind: "replace"})
 	if err != nil {
 		// A remote enable may already have succeeded. Report it explicitly; a GET
 		// to Cloudflare remains the source of truth, and retrying is idempotent.
 		return DNSSECDetails{}, fmt.Errorf("persist DNSSEC configuration: %w", err)
 	}
-
-	zone.dnssec = config
-	zone.signed = nil
 
 	if config.Provider == "cloudflare" {
 		remoteDetails.Configured = config.Enabled
@@ -292,25 +303,6 @@ func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSEC
 	}
 
 	return config.details(), nil
-}
-
-func (s *Storage) dnssecSnapshot() map[string]*DNSSECConfig {
-	s.mx.RLock()
-	defer s.mx.RUnlock()
-
-	configurations := make(map[string]*DNSSECConfig, len(s.zones))
-
-	for id, zone := range s.zones {
-		zone.mx.RLock()
-
-		if zone.dnssec != nil {
-			configurations[id] = zone.dnssec
-		}
-
-		zone.mx.RUnlock()
-	}
-
-	return configurations
 }
 
 func (c *DNSSECConfig) generateKey(name string) error {
@@ -440,36 +432,12 @@ func normalizeNameservers(nameservers []string) ([]string, error) {
 	return normalized, nil
 }
 
-func storeDNSSEC(configurations map[string]*DNSSECConfig) error {
-	tempPath := DNSSECPath + ".tmp"
-
-	file, err := os.OpenFile(tempPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
+func buildSignedZone(name string, records map[string]*Record, config *DNSSECConfig, serial uint32, now time.Time) (*SignedZone, error) {
+	settings := dnssec.Config{
+		Nameservers: config.Nameservers,
+		Key:         config.key,
+		Signer:      config.signer,
 	}
 
-	defer file.Close()
-	defer os.Remove(tempPath)
-
-	err = file.Chmod(0600)
-	if err != nil {
-		return err
-	}
-
-	err = yaml.NewEncoder(file).Encode(configurations)
-	if err != nil {
-		return err
-	}
-
-	err = file.Sync()
-	if err != nil {
-		return err
-	}
-
-	err = file.Close()
-	if err != nil {
-		return err
-	}
-
-	return os.Rename(tempPath, DNSSECPath)
+	return dnssec.BuildZone(name, records, &settings, serial, now)
 }

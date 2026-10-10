@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"sort"
@@ -16,13 +16,16 @@ type Zone struct {
 	dnssec *DNSSECConfig
 	signed *SignedZone
 	serial uint32
+	state  *ZoneState
 }
 
 type zoneData struct {
-	ID      string   `yaml:"id"`
-	Name    string   `yaml:"name"`
-	Records []Record `yaml:"records"`
-	Serial  uint32   `yaml:"dns_serial,omitempty"`
+	ID      string        `yaml:"id"`
+	Name    string        `yaml:"name"`
+	Records []Record      `yaml:"records"`
+	Serial  uint32        `yaml:"dns_serial,omitempty"`
+	DNSSEC  *DNSSECConfig `yaml:"dnssec,omitempty"`
+	Managed bool          `yaml:"dnssec_managed,omitempty"`
 }
 
 func (z *Zone) MatchesName(name string) bool {
@@ -42,6 +45,10 @@ func (z *Zone) RecordsList() []Record {
 
 	sort.Slice(records, func(i, j int) bool {
 		if records[i].Name == records[j].Name {
+			if records[i].Type == records[j].Type {
+				return records[i].ID < records[j].ID
+			}
+
 			return records[i].Type < records[j].Type
 		}
 
@@ -57,6 +64,8 @@ func (z *Zone) ZoneData() zoneData {
 		Name:    z.Name,
 		Records: z.RecordsList(),
 		Serial:  z.serial,
+		DNSSEC:  z.dnssec,
+		Managed: true,
 	}
 }
 
@@ -71,6 +80,7 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 	z.ID = data.ID
 	z.Name = data.Name
 	z.serial = data.Serial
+	z.dnssec = data.DNSSEC
 	z.Records = make(map[string]*Record, len(data.Records))
 
 	for _, rec := range data.Records {
@@ -80,6 +90,10 @@ func (z *Zone) UnmarshalYAML(unmarshal func(any) error) error {
 		}
 
 		z.Records[rec.ID] = &rec
+	}
+
+	if data.Managed {
+		z.state = &ZoneState{}
 	}
 
 	return nil

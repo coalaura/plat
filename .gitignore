@@ -1,4 +1,8 @@
 config.yml
 plat
 plat.exe
+plat-slave
+plat-slave.exe
+slave.yml
+certs/
 data

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"plat/internal/replication"
 	"strconv"
 
 	"github.com/goccy/go-yaml"
@@ -18,19 +19,13 @@ type ConfigCloudflare struct {
 	Token string `yaml:"token"`
 }
 
-type ConfigDNS struct {
-	Enabled       bool   `yaml:"enabled"`
-	Port          int    `yaml:"port"`
-	FallbackIP    string `yaml:"fallback_ip"`
-	FallbackHTTPS string `yaml:"fallback_https"`
-}
-
 type Config struct {
 	Debug bool `yaml:"debug"`
 
-	Server     ConfigServer     `yaml:"server"`
-	Cloudflare ConfigCloudflare `yaml:"cloudflare"`
-	DNS        ConfigDNS        `yaml:"dns"`
+	Server     ConfigServer             `yaml:"server"`
+	Cloudflare ConfigCloudflare         `yaml:"cloudflare"`
+	DNS        ConfigDNS                `yaml:"dns"`
+	Cluster    replication.MasterConfig `yaml:"cluster,omitempty"`
 }
 
 func NewDefaultConfig() Config {

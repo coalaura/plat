@@ -1,4 +1,4 @@
-package main
+package dnssec
 
 import (
 	"errors"
@@ -30,7 +30,7 @@ type SignedZone struct {
 	RenewAt time.Time
 }
 
-func (z *SignedZone) answer(request *dns.Msg) *dns.Msg {
+func (z *SignedZone) Answer(request *dns.Msg) *dns.Msg {
 	message := new(dns.Msg)
 
 	message.SetReply(request)
@@ -299,8 +299,8 @@ func (z *SignedZone) appendProof(message *dns.Msg, name string) {
 	message.Ns = appendSignedSet(message.Ns, z.Nodes[owner].Sets[dns.TypeNSEC], owner, true)
 }
 
-func buildSignedZone(name string, records map[string]*Record, config *DNSSECConfig, serial uint32, now time.Time) (*SignedZone, error) {
-	if config.key == nil || config.signer == nil {
+func BuildZone[Record interface{ GetRR() dns.RR }](name string, records map[string]Record, config *Config, serial uint32, now time.Time) (*SignedZone, error) {
+	if config.Key == nil || config.Signer == nil {
 		return nil, errors.New("DNSSEC signing key unavailable")
 	}
 
@@ -401,7 +401,7 @@ func buildSignedZone(name string, records map[string]*Record, config *DNSSECConf
 
 	soa.Serial = max(soa.Serial, serial)
 
-	addZoneRecord(zone.Glue, dns.Copy(config.key))
+	addZoneRecord(zone.Glue, dns.Copy(config.Key))
 
 	for owner, node := range zone.Glue {
 		if node.Sets[dns.TypeDNAME] != nil {
@@ -549,14 +549,14 @@ func buildSignedZone(name string, records map[string]*Record, config *DNSSECConf
 					Class:  dns.ClassINET,
 					Ttl:    ttl,
 				},
-				Algorithm:  config.key.Algorithm,
-				KeyTag:     config.key.KeyTag(),
+				Algorithm:  config.Key.Algorithm,
+				KeyTag:     config.Key.KeyTag(),
 				SignerName: name,
 				Inception:  uint32(now.Add(-time.Hour).Unix()),
 				Expiration: uint32(now.Add(DNSSECLifetime).Unix()),
 			}
 
-			err := signature.Sign(config.signer, set.Records)
+			err := signature.Sign(config.Signer, set.Records)
 			if err != nil {
 				return nil, fmt.Errorf("sign %s %s: %w", owner, dns.TypeToString[typ], err)
 			}

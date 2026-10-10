@@ -1,4 +1,4 @@
-package main
+package dnsserver
 
 import (
 	"bytes"
@@ -11,14 +11,27 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coalaura/plain"
 	"github.com/miekg/dns"
 )
 
-type DNSServer struct {
-	udp *dns.Server
-	tcp *dns.Server
+type Config struct {
+	Enabled       bool   `yaml:"enabled"`
+	Port          int    `yaml:"port"`
+	FallbackIP    string `yaml:"fallback_ip"`
+	FallbackHTTPS string `yaml:"fallback_https"`
+}
 
-	storage *Storage
+type Storage interface {
+	LookupDNS(*dns.Msg) (*dns.Msg, bool, error)
+}
+
+type DNSServer struct {
+	udp    *dns.Server
+	tcp    *dns.Server
+	errors chan error
+
+	storage Storage
 
 	fallbackIP string
 	dnsClient  *dns.Client
@@ -30,6 +43,8 @@ type DNSServer struct {
 type DoHRequest struct {
 	body []byte
 }
+
+var log = plain.New(plain.WithDate(plain.RFC3339Local))
 
 func NewDoHHTTPClient() *http.Client {
 	return &http.Client{
@@ -88,16 +103,17 @@ func NewDoHRequest(r *http.Request) (*DoHRequest, error) {
 	}, nil
 }
 
-func NewDNSServer(config *Config, storage *Storage) *DNSServer {
-	addr := fmt.Sprintf(":%d", config.DNS.Port)
+func NewDNSServer(config Config, storage Storage) *DNSServer {
+	addr := fmt.Sprintf(":%d", config.Port)
 
 	server := &DNSServer{
 		storage: storage,
+		errors:  make(chan error, 2),
 
-		fallbackIP: config.DNS.FallbackIP,
+		fallbackIP: config.FallbackIP,
 		dnsClient:  new(dns.Client),
 
-		fallbackHTTPS: config.DNS.FallbackHTTPS,
+		fallbackHTTPS: config.FallbackHTTPS,
 		httpClient:    NewDoHHTTPClient(),
 	}
 
@@ -115,8 +131,8 @@ func NewDNSServer(config *Config, storage *Storage) *DNSServer {
 
 	log.Printf("DNS server listening on %s\n", addr)
 
-	go server.udp.ListenAndServe()
-	go server.tcp.ListenAndServe()
+	go server.serve(server.udp)
+	go server.serve(server.tcp)
 
 	return server
 }
@@ -139,6 +155,17 @@ func (s *DNSServer) Close() {
 
 	if s.tcp != nil {
 		s.tcp.Shutdown()
+	}
+}
+
+func (s *DNSServer) Errors() <-chan error {
+	return s.errors
+}
+
+func (s *DNSServer) serve(server *dns.Server) {
+	err := server.ListenAndServe()
+	if err != nil {
+		s.errors <- fmt.Errorf("DNS %s: %w", server.Net, err)
 	}
 }
 
@@ -241,7 +268,7 @@ func (s *DNSServer) HandleDNSMessage(w dns.ResponseWriter, r *dns.Msg) {
 func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DoHRequest) {
 	msg, err := r.Unpack()
 	if err != nil {
-		abort(w, http.StatusBadRequest, "failed to unpack dns response")
+		http.Error(w, "failed to unpack dns response", http.StatusBadRequest)
 
 		return
 	}
@@ -252,7 +279,7 @@ func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DoHRequest) {
 
 	respBytes, err := resp.Pack()
 	if err != nil {
-		abort(w, http.StatusInternalServerError, "failed to pack dns response")
+		http.Error(w, "failed to pack dns response", http.StatusInternalServerError)
 
 		return
 	}

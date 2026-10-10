@@ -45,7 +45,7 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 			return
 		}
 
-		if storage.client == nil {
+		if storage.Client() == nil {
 			abort(w, http.StatusServiceUnavailable, "cloudflare is not configured")
 
 			return
@@ -70,7 +70,7 @@ func HandleFetchRecords(storage *Storage) http.HandlerFunc {
 
 func HandleFetchAllZones(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if storage.client == nil {
+		if storage.Client() == nil {
 			abort(w, http.StatusServiceUnavailable, "cloudflare is not configured")
 
 			return
@@ -147,7 +147,7 @@ func HandleDeleteZone(storage *Storage) http.HandlerFunc {
 
 func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if storage.client == nil {
+		if storage.Client() == nil {
 			abort(w, http.StatusServiceUnavailable, "cloudflare is not configured")
 
 			return
@@ -160,7 +160,7 @@ func HandleFetchAllRecords(storage *Storage) http.HandlerFunc {
 			return
 		}
 
-		availableZones, err := storage.client.ListZones(r.Context())
+		availableZones, err := storage.Client().ListZones(r.Context())
 		if err != nil {
 			abort(w, http.StatusBadGateway, err.Error())
 
