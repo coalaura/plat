@@ -77,7 +77,7 @@ jobs:
         arch: ${{ matrix.goarch }}
         generate: false
         package: ./cmd/slave
-        output: bin/plat-slave-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+        output: bin/${{ env.project_name }}-slave-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         go-flags: |
           -ldflags=-X main.Version=${{ github.ref_name }}
 
@@ -114,8 +114,6 @@ jobs:
         name: signed-${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
         if-no-files-found: error
         path: |
-          ${{ steps.sign.outputs.path }}
-          ${{ steps.sign-slave.outputs.path }}
           bin/*.tar.gz
           bin/*.zip
 
