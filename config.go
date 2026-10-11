@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"plat/internal/dnsserver"
 	"plat/internal/replication"
 	"strconv"
+	"strings"
 
 	"github.com/goccy/go-yaml"
 )
@@ -19,6 +21,11 @@ type ConfigCloudflare struct {
 	Token string `yaml:"token"`
 }
 
+type ConfigDNS struct {
+	dnsserver.Config `yaml:",inline"`
+	Domain           string `yaml:"domain"`
+}
+
 type Config struct {
 	Debug bool `yaml:"debug"`
 
@@ -26,53 +33,6 @@ type Config struct {
 	Cloudflare ConfigCloudflare         `yaml:"cloudflare"`
 	DNS        ConfigDNS                `yaml:"dns"`
 	Cluster    replication.MasterConfig `yaml:"cluster,omitempty"`
-}
-
-func NewDefaultConfig() Config {
-	return Config{
-		Server: ConfigServer{
-			Port:  8080,
-			Token: "p4$$w0rd",
-		},
-		DNS: ConfigDNS{
-			Enabled:       true,
-			Port:          531,
-			FallbackIP:    "9.9.9.9",
-			FallbackHTTPS: "https://dns.quad9.net/dns-query",
-		},
-	}
-}
-
-func LoadConfig() (*Config, error) {
-	cfg := NewDefaultConfig()
-
-	file, err := OpenFileForReading("config.yml")
-	if os.IsNotExist(err) {
-		file.Close()
-
-		err = cfg.Store()
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		if err != nil {
-			return nil, err
-		}
-
-		defer file.Close()
-
-		err = yaml.NewDecoder(file).Decode(&cfg)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	err = cfg.Validate()
-	if err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
 }
 
 func (c *Config) Validate() error {
@@ -86,6 +46,15 @@ func (c *Config) Validate() error {
 	}
 
 	// dns
+	if c.DNS.Domain != "" {
+		domain := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(c.DNS.Domain), "."))
+		if !validDNSDomain(domain) {
+			return fmt.Errorf("dns.domain %q must be a hostname without a scheme, port or path", c.DNS.Domain)
+		}
+
+		c.DNS.Domain = domain
+	}
+
 	if c.DNS.Enabled {
 		if c.DNS.Port < 1 || c.DNS.Port > 65535 {
 			return fmt.Errorf("dns.port must be 1-65535, got %d", c.DNS.Port)
@@ -136,6 +105,7 @@ func (e *Config) Store() error {
 
 		"$.dns.enabled":        {yaml.HeadComment(fmt.Sprintf(" enable built-in dns server (default: %v)", def.DNS.Enabled))},
 		"$.dns.port":           {yaml.HeadComment(fmt.Sprintf(" dns server port (default: %v)", def.DNS.Port))},
+		"$.dns.domain":         {yaml.HeadComment(" optional hostname reserved for DoH; all other HTTP requests on this host are rejected")},
 		"$.dns.fallback_ip":    {yaml.HeadComment(fmt.Sprintf(" optional ip fallback resolver for unknown queries (default: %q)", def.DNS.FallbackIP))},
 		"$.dns.fallback_https": {yaml.HeadComment(fmt.Sprintf(" optional DoH (DNS-over-HTTPS) fallback resolver (default: %q)", def.DNS.FallbackHTTPS))},
 	}
@@ -148,4 +118,76 @@ func (e *Config) Store() error {
 	defer file.Close()
 
 	return yaml.NewEncoder(file, yaml.WithComment(comments)).Encode(e)
+}
+
+func NewDefaultConfig() Config {
+	return Config{
+		Server: ConfigServer{
+			Port:  8080,
+			Token: "p4$$w0rd",
+		},
+		DNS: ConfigDNS{
+			Config: dnsserver.Config{
+				Enabled:       true,
+				Port:          531,
+				FallbackIP:    "9.9.9.9",
+				FallbackHTTPS: "https://dns.quad9.net/dns-query",
+			},
+		},
+	}
+}
+
+func LoadConfig() (*Config, error) {
+	cfg := NewDefaultConfig()
+
+	file, err := OpenFileForReading("config.yml")
+	if os.IsNotExist(err) {
+		file.Close()
+
+		err = cfg.Store()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if err != nil {
+			return nil, err
+		}
+
+		defer file.Close()
+
+		err = yaml.NewDecoder(file).Decode(&cfg)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	err = cfg.Validate()
+	if err != nil {
+		return nil, err
+	}
+
+	return &cfg, nil
+}
+
+func validDNSDomain(domain string) bool {
+	if domain == "" || len(domain) > 253 {
+		return false
+	}
+
+	for label := range strings.SplitSeq(domain, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+
+		for _, character := range label {
+			letter := character >= 'a' && character <= 'z'
+			digit := character >= '0' && character <= '9'
+
+			if !letter && !digit && character != '-' {
+				return false
+			}
+		}
+	}
+
+	return true
 }

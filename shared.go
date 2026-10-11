@@ -11,7 +11,6 @@ type Record = storage.Record
 type DynDNSUserRequest = storage.DynDNSUserRequest
 type DNSSECRequest = storage.DNSSECRequest
 type DNSServer = dnsserver.DNSServer
-type ConfigDNS = dnsserver.Config
 
 var (
 	errInvalidZoneName           = storage.ErrInvalidZoneName
@@ -31,5 +30,5 @@ func LoadStorage(config *Config) (*Storage, error) {
 }
 
 func NewDNSServer(config *Config, data *Storage) *DNSServer {
-	return dnsserver.NewDNSServer(config.DNS, data)
+	return dnsserver.NewDNSServer(config.DNS.Config, data)
 }

@@ -38,11 +38,17 @@ dns:
   enabled: true
   # dns server port (default: 531)
   port: 531
+  # optional hostname reserved for DoH; all other HTTP requests on this host are rejected
+  domain: ""
   # optional ip fallback resolver for unknown queries (default: "9.9.9.9")
   fallback_ip: 9.9.9.9
   # optional DoH fallback resolver (default: "https://dns.quad9.net/dns-query")
   fallback_https: https://dns.quad9.net/dns-query
 ```
+
+Set `dns.domain` to a hostname such as `dns.example.com` (without a scheme, port or path) to reserve that host for DNS-over-HTTPS. DoH GET and POST queries, typically sent to `/dns-query`, continue to work; every other request on that host returns `404`, including the panel, static files, management API, DynDNS and replication. The restriction also applies when `dns.enabled` is false, in which case all requests on that host are rejected. Other hosts keep their existing routing, including DoH support. Leaving `dns.domain` empty preserves the default shared-host behavior.
+
+Matching uses the HTTP `Host` header, ignoring case, an optional port and a trailing dot. It matches only the configured hostname, not its subdomains. When using a reverse proxy, preserve the original `Host` header; `Forwarded` and `X-Forwarded-Host` do not override it. Use another hostname for the panel and for slave `master.address` replication URLs.
 
 ## Zones and Cloudflare
 
