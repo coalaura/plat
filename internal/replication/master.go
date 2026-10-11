@@ -35,12 +35,14 @@ type acknowledgment struct {
 }
 
 type Status struct {
-	Connected   bool
-	LastReceive time.Time
-	LastApplied time.Time
-	Epoch       string
-	Sequence    uint64
-	Error       string
+	Name        string    `json:"name"`
+	Connected   bool      `json:"connected"`
+	Ready       bool      `json:"ready"` // The current connection has acknowledged a published snapshot.
+	LastReceive time.Time `json:"last_receive,omitzero"`
+	LastApplied time.Time `json:"last_applied,omitzero"`
+	Epoch       string    `json:"epoch"`
+	Sequence    uint64    `json:"sequence,string"`
+	Error       string    `json:"error"`
 }
 
 type health struct {
@@ -66,6 +68,7 @@ func (s *health) received() {
 func (s *health) connection(connected bool, err error) {
 	s.mx.Lock()
 	s.status.Connected = connected
+	s.status.Ready = false
 
 	if err != nil {
 		s.status.Error = err.Error()
@@ -81,6 +84,7 @@ func (s *health) applied(epoch string, sequence uint64) {
 	s.status.Epoch = epoch
 	s.status.Sequence = sequence
 	s.status.LastApplied = time.Now()
+	s.status.Ready = true
 	s.mx.Unlock()
 }
 
@@ -149,19 +153,24 @@ func (m *Master) accept(ctx context.Context, connection net.Conn, timing Timing)
 	}
 
 	state := &health{}
+	previousState := m.statuses[id]
+
+	if previousState != nil {
+		state.status = previousState.snapshot()
+	}
+
+	state.connection(true, nil)
 
 	m.connections[id] = connection
 	m.statuses[id] = state
 
 	m.mx.Unlock()
 
-	state.connection(true, nil)
-
 	peer := newSession(secure, timing, state)
-	defer peer.Close()
 
 	err = m.synchronize(ctx, peer, state)
 
+	peer.Close()
 	state.connection(false, err)
 
 	if err != nil && ctx.Err() == nil {

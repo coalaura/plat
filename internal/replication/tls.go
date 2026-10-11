@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"plat/internal/storage"
 )
 
 type TLSFiles struct {
@@ -31,7 +33,7 @@ type ClientConfig struct {
 	TrustedMaster string   `yaml:"trusted_master"`
 }
 
-func (c MasterConfig) TLSConfig() (*tls.Config, error) {
+func (c MasterConfig) NewMaster(data *storage.Storage) (*Master, error) {
 	err := c.Prepare()
 	if err != nil {
 		return nil, err
@@ -43,7 +45,7 @@ func (c MasterConfig) TLSConfig() (*tls.Config, error) {
 	}
 
 	pool := x509.NewCertPool()
-	authorized := make(map[string]bool)
+	authorized := make(map[string]string)
 
 	err = loadTrustedClients(c.TrustedClients, pool, authorized)
 	if err != nil {
@@ -58,7 +60,11 @@ func (c MasterConfig) TLSConfig() (*tls.Config, error) {
 	settings.ClientCAs = pool
 
 	settings.VerifyConnection = func(state tls.ConnectionState) error {
-		if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 || !authorized[Fingerprint(state.PeerCertificates[0])] {
+		if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 {
+			return errors.New("slave certificate is not authorized")
+		}
+
+		if _, ok := authorized[Fingerprint(state.PeerCertificates[0])]; !ok {
 			return errors.New("slave certificate is not authorized")
 		}
 
@@ -69,7 +75,19 @@ func (c MasterConfig) TLSConfig() (*tls.Config, error) {
 		return nil
 	}
 
-	return settings, nil
+	statuses := make(map[string]*health, len(authorized))
+
+	for id, name := range authorized {
+		statuses[id] = &health{status: Status{Name: name}}
+	}
+
+	master := &Master{
+		Storage:  data,
+		TLS:      settings,
+		statuses: statuses,
+	}
+
+	return master, nil
 }
 
 func (c ClientConfig) TLSConfig() (*tls.Config, error) {
@@ -84,7 +102,7 @@ func (c ClientConfig) TLSConfig() (*tls.Config, error) {
 	}
 
 	pool := x509.NewCertPool()
-	authorized := make(map[string]bool, 1)
+	authorized := make(map[string]string, 1)
 
 	err = loadTrustFile(c.TrustedMaster, pool, authorized)
 	if errors.Is(err, os.ErrNotExist) {
@@ -99,7 +117,11 @@ func (c ClientConfig) TLSConfig() (*tls.Config, error) {
 	settings.ServerName = MasterServerName
 
 	settings.VerifyConnection = func(state tls.ConnectionState) error {
-		if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 || !authorized[Fingerprint(state.PeerCertificates[0])] {
+		if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 {
+			return errors.New("master certificate is not authorized")
+		}
+
+		if _, ok := authorized[Fingerprint(state.PeerCertificates[0])]; !ok {
 			return errors.New("master certificate is not authorized")
 		}
 
@@ -134,7 +156,7 @@ func loadTLS(files TLSFiles) (*tls.Config, error) {
 	return settings, nil
 }
 
-func loadTrustedClients(directory string, pool *x509.CertPool, authorized map[string]bool) error {
+func loadTrustedClients(directory string, pool *x509.CertPool, authorized map[string]string) error {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return err
@@ -155,7 +177,7 @@ func loadTrustedClients(directory string, pool *x509.CertPool, authorized map[st
 	return nil
 }
 
-func loadTrustFile(path string, pool *x509.CertPool, authorized map[string]bool) error {
+func loadTrustFile(path string, pool *x509.CertPool, authorized map[string]string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -183,7 +205,7 @@ func loadTrustFile(path string, pool *x509.CertPool, authorized map[string]bool)
 		}
 
 		pool.AddCert(certificate)
-		authorized[Fingerprint(certificate)] = true
+		authorized[Fingerprint(certificate)] = filepath.Base(path)
 
 		count++
 		data = rest

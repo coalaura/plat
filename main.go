@@ -67,11 +67,11 @@ func main() {
 
 	r.Handle("/*", frontend(config))
 
-	if config.Cluster.Enabled {
-		settings, err := config.Cluster.TLSConfig()
-		log.MustFail(err)
+	var master *replication.Master
 
-		master := &replication.Master{Storage: storage, TLS: settings}
+	if config.Cluster.Enabled {
+		master, err = config.Cluster.NewMaster(storage)
+		log.MustFail(err)
 
 		handler, err := master.HTTPHandler(clusterContext)
 		log.MustFail(err)
@@ -103,6 +103,7 @@ func main() {
 	r.Group(func(gr chi.Router) {
 		gr.Use(authenticate(config))
 
+		gr.Get("/-/slaves", HandleListSlaves(master))
 		gr.Patch("/-/zones", HandleFetchAllZones(storage))
 		gr.Patch("/-/records", HandleFetchAllRecords(storage))
 		gr.Post("/-/zones", HandleCreateZone(storage))

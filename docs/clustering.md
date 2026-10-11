@@ -72,6 +72,14 @@ Expose both UDP and TCP port 53 and let nginx serve public HTTPS on port 443, pr
 
 The slave serves `/dns-query` over plain HTTP at `http.address` (default `:8080`). Configure nginx to terminate TLS with the public DoH certificate and forward requests to `http://<slave-address>:8080/dns-query`, preserving the query string and request body. DoH clients continue to use the public `https://dns.example.net/dns-query` URL.
 
+## Monitoring slaves
+
+Open the **Slaves** tab in the master's authenticated frontend to see every trusted certificate loaded at startup, including slaves that have not connected. Names come from the certificate filenames; SHA-256 fingerprints distinguish identities. The view refreshes every five seconds while visible and has a manual refresh button.
+
+**Up to date** means the connected slave has acknowledged the master's current epoch and revision after publishing its snapshot. **Syncing** means the connection is active but has not yet acknowledged the current state. **Offline** and **Not connected** distinguish disconnected slaves from those not yet observed. Last-seen and last-applied times, acknowledged revisions and the latest connection error are shown separately. These are replication health indicators, not probes of the slave's public DNS or DoH endpoints. Connection history is held in memory and resets when the master restarts.
+
+The authenticated `GET /-/slaves` endpoint supplies the same status, including whether replication is enabled. Revision numbers are encoded as decimal strings to preserve their full precision in the browser.
+
 ## Troubleshooting synchronization
 
 `Waiting for first complete synchronization` means no complete checkpoint is available yet. The slave logs failed connection attempts and their retry delay, successful connections and completed synchronization. The master logs rejected replication TLS handshakes and synchronization failures.

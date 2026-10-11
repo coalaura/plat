@@ -1,4 +1,6 @@
 import "../css/plat.css";
+import "../css/slaves.css";
+import { createSlavesPanel } from "./slaves.js";
 
 const app = document.getElementById("app");
 
@@ -115,6 +117,8 @@ const ui = {
 	workspaceTabs: null,
 	recordsSlot: null,
 	dyndnsSlot: null,
+	slavesSlot: null,
+	slavesPanel: null,
 	recordsScrollByZone: {},
 	notificationItems: new Map(),
 	notificationTimers: new Map(),
@@ -3229,16 +3233,20 @@ function mountShell() {
 }
 
 function clearAuthedSlots() {
+	ui.slavesPanel?.destroy();
+
 	ui.zonesSlot = null;
 	ui.workspaceSlot = null;
 	ui.workspaceTabs = null;
 	ui.recordsSlot = null;
 	ui.dyndnsSlot = null;
+	ui.slavesSlot = null;
+	ui.slavesPanel = null;
 	ui.recordsScrollByZone = {};
 }
 
 function ensureAuthedLayout() {
-	if (ui.zonesSlot && ui.workspaceSlot && ui.workspaceTabs && ui.recordsSlot && ui.dyndnsSlot) {
+	if (ui.zonesSlot && ui.workspaceSlot && ui.workspaceTabs && ui.recordsSlot && ui.dyndnsSlot && ui.slavesSlot) {
 		return;
 	}
 
@@ -3251,10 +3259,14 @@ function ensureAuthedLayout() {
 	ui.workspaceTabs = tabs;
 	ui.recordsSlot = make("div", "records-slot");
 	ui.dyndnsSlot = make("div", "dyndns-slot");
+	ui.slavesSlot = make("div", "slaves-slot");
+	ui.slavesPanel = createSlavesPanel(api);
+	ui.slavesSlot.append(ui.slavesPanel.element);
 
 	const tabList = [
 		["records", "Records"],
 		["dyndns", "DynDNS"],
+		["slaves", "Slaves"],
 	];
 
 	for (const [workspaceName, label] of tabList) {
@@ -3264,6 +3276,14 @@ function ensureAuthedLayout() {
 		tab.dataset.workspace = workspaceName;
 		tab.textContent = label;
 		tab.setAttribute("role", "tab");
+		tab.id = `tab-${workspaceName}`;
+		tab.setAttribute("aria-controls", `panel-${workspaceName}`);
+
+		const slot = ui[`${workspaceName}Slot`];
+
+		slot.id = `panel-${workspaceName}`;
+		slot.setAttribute("role", "tabpanel");
+		slot.setAttribute("aria-labelledby", tab.id);
 
 		tab.addEventListener("click", () => {
 			state.activeWorkspace = workspaceName;
@@ -3276,7 +3296,7 @@ function ensureAuthedLayout() {
 	tabs.setAttribute("role", "tablist");
 	tabs.setAttribute("aria-label", "DNS management");
 
-	workspace.append(tabs, ui.recordsSlot, ui.dyndnsSlot);
+	workspace.append(tabs, ui.recordsSlot, ui.dyndnsSlot, ui.slavesSlot);
 	layout.append(ui.zonesSlot, workspace);
 
 	ui.contentSlot.replaceChildren(layout);
@@ -3285,7 +3305,7 @@ function ensureAuthedLayout() {
 }
 
 function syncWorkspaceTabs() {
-	if (!ui.workspaceTabs || !ui.recordsSlot || !ui.dyndnsSlot) {
+	if (!ui.workspaceTabs || !ui.recordsSlot || !ui.dyndnsSlot || !ui.slavesSlot) {
 		return;
 	}
 
@@ -3299,6 +3319,8 @@ function syncWorkspaceTabs() {
 
 	ui.recordsSlot.classList.toggle("hidden", state.activeWorkspace !== "records");
 	ui.dyndnsSlot.classList.toggle("hidden", state.activeWorkspace !== "dyndns");
+	ui.slavesSlot.classList.toggle("hidden", state.activeWorkspace !== "slaves");
+	ui.slavesPanel.setActive(state.activeWorkspace === "slaves");
 }
 
 function renderHeader() {

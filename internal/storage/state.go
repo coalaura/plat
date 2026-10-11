@@ -78,6 +78,13 @@ func (s *Storage) Capture() (Snapshot, *Subscription) {
 	return snapshot, subscription
 }
 
+func (s *Storage) Revision() (string, uint64) {
+	s.commitMu.Lock()
+	defer s.commitMu.Unlock()
+
+	return s.epoch, s.sequence
+}
+
 func (s *Storage) Snapshot() Snapshot {
 	s.commitMu.Lock()
 	defer s.commitMu.Unlock()

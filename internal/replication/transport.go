@@ -47,7 +47,10 @@ func (m *Master) HTTPHandler(ctx context.Context) (http.Handler, error) {
 	}
 
 	m.connections = make(map[string]net.Conn)
-	m.statuses = make(map[string]*health)
+
+	if m.statuses == nil {
+		m.statuses = make(map[string]*health)
+	}
 
 	capacity := make(chan struct{}, 32)
 
