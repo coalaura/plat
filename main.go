@@ -72,15 +72,17 @@ func main() {
 	r.Handle("/*", frontend(config))
 
 	if config.Cluster.Enabled {
-		settings, tlsErr := config.Cluster.TLSConfig()
-		log.MustFail(tlsErr)
+		settings, err := config.Cluster.TLSConfig()
+		log.MustFail(err)
 
 		master := &replication.Master{Storage: storage, TLS: settings}
-		handler, handlerErr := master.HTTPHandler(clusterContext)
-		log.MustFail(handlerErr)
+
+		handler, err := master.HTTPHandler(clusterContext)
+		log.MustFail(err)
 
 		r.Handle(replication.EndpointPath, handler)
-		log.Printf("Replication available at %s on the HTTP listener", replication.EndpointPath)
+
+		log.Printf("Replication available at %s on the HTTP listener\n", replication.EndpointPath)
 	}
 
 	r.Get("/nic/update", HandleDynDNSUpdate(storage))
