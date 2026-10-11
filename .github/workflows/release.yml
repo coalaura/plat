@@ -54,7 +54,7 @@ jobs:
         arch: ${{ matrix.goarch }}
         generate: false
         cgo: true
-        output: bin/${{ env.project_name }}-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+        output: bin/${{ env.project_name }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         go-flags: |
           -ldflags=-X main.Version=${{ github.ref_name }}
 
@@ -77,7 +77,7 @@ jobs:
         arch: ${{ matrix.goarch }}
         generate: false
         package: ./cmd/slave
-        output: bin/${{ env.project_name }}-slave-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+        output: bin/${{ env.project_name }}-slave${{ matrix.goos == 'windows' && '.exe' || '' }}
         go-flags: |
           -ldflags=-X main.Version=${{ github.ref_name }}
 
@@ -137,17 +137,9 @@ jobs:
       working-directory: bin
       shell: bash
       run: |
-        for project in plat plat-slave; do
-          for os in linux windows darwin; do
-            for arch in amd64 arm64; do
-              binary="$project-$os-$arch"
-              if [[ "$os" == "windows" ]]; then binary="$binary.exe"; fi
-              sha256sum -b "$binary"
-            done
-          done
-        done > SHA256SUMS
+        sha256sum -b *.tar.gz *.zip > SHA256SUMS
 
-    - name: Attest Signed Binaries
+    - name: Attest Release Archives
       uses: actions/attest@v4
       with:
         subject-checksums: bin/SHA256SUMS
@@ -155,7 +147,10 @@ jobs:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v3
       with:
-        files: bin/*
+        files: |
+          bin/*.tar.gz
+          bin/*.zip
+          bin/SHA256SUMS
         fail_on_unmatched_files: true
         generate_release_notes: true
         prerelease: ${{ contains(github.ref_name, '-') }}
