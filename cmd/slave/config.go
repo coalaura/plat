@@ -83,12 +83,12 @@ func loadConfig() (Config, error) {
 	config := Config{
 		Master: replication.ClientConfig{
 			ServerName:    "plat-master",
-			TLS:           replication.TLSFiles{Certificate: "certs/slave.crt", Key: "certs/slave.key"},
-			TrustedMaster: "certs/master.crt",
+			TLS:           replication.TLSFiles{Certificate: "data/certs/slave.crt", Key: "data/certs/slave.key"},
+			TrustedMaster: "data/certs/master.crt",
 		},
 		Checkpoint: "data/slave.json",
 		DNS:        dnsserver.Config{Enabled: true, Port: 53},
-		HTTPS:      HTTPSConfig{Address: ":443", Certificate: "certs/doh.crt", Key: "certs/doh.key"},
+		HTTPS:      HTTPSConfig{Address: ":443", Certificate: "data/certs/doh.crt", Key: "data/certs/doh.key"},
 	}
 
 	data, err := os.ReadFile("slave.yml")

@@ -28,10 +28,10 @@ func (c *MasterConfig) Prepare() error {
 		return errors.New("cluster.clients requires tls.ca; otherwise authorize slaves by copying their certificates into trusted_clients")
 	}
 
-	c.TLS.defaults("certs/master.crt", "certs/master.key")
+	c.TLS.defaults("data/certs/master.crt", "data/certs/master.key")
 
 	if c.TrustedClients == "" {
-		c.TrustedClients = "certs/slaves"
+		c.TrustedClients = "data/certs/slaves"
 	}
 
 	err := os.MkdirAll(c.TrustedClients, 0700)
@@ -47,14 +47,14 @@ func (c *ClientConfig) Prepare() error {
 		return nil
 	}
 
-	c.TLS.defaults("certs/slave.crt", "certs/slave.key")
+	c.TLS.defaults("data/certs/slave.crt", "data/certs/slave.key")
 
 	if c.ServerName == "" {
 		c.ServerName = defaultServerName
 	}
 
 	if c.TrustedMaster == "" {
-		c.TrustedMaster = "certs/master.crt"
+		c.TrustedMaster = "data/certs/master.crt"
 	}
 
 	return c.TLS.EnsureCertificate(nil, x509.ExtKeyUsageClientAuth)

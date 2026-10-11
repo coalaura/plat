@@ -6,10 +6,10 @@
 
 No OpenSSL commands or shared CA private key are needed. Run each node in its own working directory; all paths below are relative to that directory.
 
-1. Start `plat` on the master. It creates `config.yml` if needed, `certs/master.crt`, `certs/master.key` and the empty `certs/slaves/` trust directory, even before replication is enabled.
-2. Start `plat-slave` on each slave. It creates `slave.yml`, `certs/slave.crt`, `certs/slave.key` and a separate DoH identity (`certs/doh.crt`, `certs/doh.key`). It then exits with setup instructions because the master address is not configured yet.
-3. Copy the master's **`certs/master.crt`** to **`certs/master.crt` on every slave**.
-4. Copy each slave's **`certs/slave.crt`** to the master's **`certs/slaves/`** directory, giving each a unique filename, such as `slave-1.crt` and `slave-2.crt`.
+1. Start `plat` on the master. It creates `config.yml` if needed, `data/certs/master.crt`, `data/certs/master.key` and the empty `data/certs/slaves/` trust directory, even before replication is enabled.
+2. Start `plat-slave` on each slave. It creates `slave.yml`, `data/certs/slave.crt`, `data/certs/slave.key` and a separate DoH identity (`data/certs/doh.crt`, `data/certs/doh.key`). It then exits with setup instructions because the master address is not configured yet.
+3. Copy the master's **`data/certs/master.crt`** to **`data/certs/master.crt` on every slave**.
+4. Copy each slave's **`data/certs/slave.crt`** to the master's **`data/certs/slaves/`** directory, giving each a unique filename, such as `slave-1.crt` and `slave-2.crt`.
 5. Set `cluster.enabled: true` on the master. On each slave, set `master.address` to the master's existing base URL, such as `https://master.example.net` through a reverse proxy or `http://master.example.net:8080` when connecting directly. Use the HTTP/HTTPS port already exposed for plat; no extra firewall rule is needed.
 6. Restart both sides. The slave synchronizes before it starts serving DNS and DoH for the first time.
 
@@ -32,7 +32,7 @@ cluster:
   enabled: true
 ```
 
-Optional `cluster.tls.certificate` and `cluster.tls.key` override the generated identity paths (set both). `cluster.trusted_clients` overrides `certs/slaves`. All `.crt` and `.pem` files in that directory must contain only public certificates; malformed certificate files prevent startup. Other file extensions and subdirectories are ignored.
+Optional `cluster.tls.certificate` and `cluster.tls.key` override the generated identity paths (set both). `cluster.trusted_clients` overrides `data/certs/slaves`. All `.crt` and `.pem` files in that directory must contain only public certificates; malformed certificate files prevent startup. Other file extensions and subdirectories are ignored.
 
 ### HTTP/HTTPS and reverse proxies
 
@@ -50,10 +50,10 @@ If a reverse proxy fronts plat, forward this route with WebSocket upgrades enabl
 master:
   address: https://master.example.net
   server_name: plat-master
-  trusted_master: certs/master.crt
+  trusted_master: data/certs/master.crt
   tls:
-    certificate: certs/slave.crt
-    key: certs/slave.key
+    certificate: data/certs/slave.crt
+    key: data/certs/slave.key
 checkpoint: data/slave.json
 dns:
   enabled: true
@@ -62,8 +62,8 @@ dns:
   fallback_https: ""
 https:
   address: ":443"
-  certificate: certs/doh.crt
-  key: certs/doh.key
+  certificate: data/certs/doh.crt
+  key: data/certs/doh.key
 ```
 
 Expose both UDP and TCP port 53 and HTTPS port 443 as appropriate. With empty fallback values, the slave serves its replicated authoritative data without enabling recursion. Configure delegation, glue and parent DS records as described in the main DNSSEC documentation. Slaves sign locally with the replicated keys, refresh derived signatures independently and retain master-controlled SOA serials. Cloudflare-signed zones retain their authoritative forwarding behavior.
@@ -72,7 +72,7 @@ Expose both UDP and TCP port 53 and HTTPS port 443 as appropriate. With empty fa
 
 The generated DoH certificate is separate from the replication identity. By default its SANs cover the machine hostname, `localhost`, `127.0.0.1` and `::1`. Set `https.names` to a list of DNS names/IP addresses before generating it to serve a different identity (for example, `names: [dns.example.net]`). Changing this list does not replace an existing certificate; move both DoH files aside to regenerate them deliberately.
 
-For private DoH clients, install/trust `certs/doh.crt` in those clients and use a name listed in that certificate. Public browsers and resolvers do not automatically trust self-signed certificates. For publicly trusted DoH, point `https.certificate` and `https.key` at an existing public-CA certificate/full chain and key; plat reuses them. Restart the slave after replacing those files.
+For private DoH clients, install/trust `data/certs/doh.crt` in those clients and use a name listed in that certificate. Public browsers and resolvers do not automatically trust self-signed certificates. For publicly trusted DoH, point `https.certificate` and `https.key` at an existing public-CA certificate/full chain and key; plat reuses them. Restart the slave after replacing those files.
 
 ### Existing private-CA deployments
 
