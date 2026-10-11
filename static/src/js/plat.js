@@ -26,6 +26,65 @@ const RecordTypes = [
 	"URI",
 ];
 
+const DNSSECAlgorithms = [
+	{
+		value: "8",
+		name: "RSA/SHA-256",
+		rating: "Strong (128-bit)",
+		summary: "broad compatibility",
+		security: "3072-bit RSA provides about 128-bit classical security. SHA-256 does not make this a 256-bit security level. Not quantum-resistant.",
+		compatibility: "Long-established support across registrars and validating resolvers, including older deployments. A useful compatibility choice when your registrar does not accept newer algorithms; keys and signatures are larger than ECDSA or Ed25519.",
+	},
+	{
+		value: "10",
+		name: "RSA/SHA-512",
+		rating: "Strong (128-bit)",
+		summary: "broad validator support",
+		security: "3072-bit RSA provides about 128-bit classical security. SHA-512 does not make this a 512-bit security level. Not quantum-resistant.",
+		compatibility: "Broad validator support, but registrar support varies. Larger signatures than ECDSA or Ed25519. IANA does not recommend RSA/SHA-512 for new signing.",
+	},
+	{
+		value: "13",
+		name: "ECDSA/SHA-256",
+		rating: "Strong (128-bit)",
+		summary: "widely supported",
+		security: "ECDSA P-256 provides about 128-bit classical security with compact keys and signatures. Not quantum-resistant.",
+		compatibility: "Widely supported by registrars and validating resolvers; a practical choice for broad compatibility. Confirm your registrar accepts algorithm 13 DS records.",
+	},
+	{
+		value: "14",
+		name: "ECDSA/SHA-384",
+		rating: "Very strong (192-bit)",
+		summary: "check provider support",
+		security: "ECDSA P-384 provides about 192-bit classical security, above the 128-bit choices. Not quantum-resistant.",
+		compatibility: "Supported by modern validators, but less commonly offered by registrars than algorithm 13. Confirm your registrar accepts algorithm 14 DS records.",
+	},
+	{
+		value: "15",
+		name: "Ed25519",
+		rating: "Strong (128-bit)",
+		summary: "default - modern validator support",
+		security: "Ed25519 provides about 128-bit classical security with compact keys and signatures. Not quantum-resistant.",
+		compatibility: "Supported by modern validators, but some registrars do not accept algorithm 15 DS records. Plat's default; confirm your registrar supports it.",
+	},
+	{
+		value: "16",
+		name: "Ed448",
+		rating: "Very strong (224-bit)",
+		summary: "limited registrar support",
+		security: "Ed448 provides about 224-bit classical security, the highest classical strength of these conventional choices. Not quantum-resistant.",
+		compatibility: "Less widely deployed than Ed25519 and ECDSA P-256. Confirm that your registrar accepts algorithm 16 DS records and your validating resolvers support it. Public keys are 57 bytes and signatures are 114 bytes.",
+	},
+	{
+		value: "18",
+		name: "ML-DSA-44",
+		rating: "Quantum-resistant",
+		summary: "limited support",
+		security: "Designed to resist quantum attacks; NIST security category 2. This category is not directly comparable to classical bit-strength ratings.",
+		compatibility: "New DNSSEC algorithm with limited registrar and validator support. Requires explicit algorithm 18 support end-to-end; unsupported validators cannot authenticate it. Large 1,312-byte public keys and 2,420-byte signatures often require DNS over TCP.",
+	},
+];
+
 const state = {
 	token: sessionStorage.getItem("plat-token") || "",
 	theme: localStorage.getItem("plat-theme") || "dark",
@@ -322,7 +381,7 @@ function recordTypeConfig(type) {
 			description: "Certificate Authority Authorization policy.",
 			fields: [
 				{ key: "flags", label: "Flags", placeholder: "0", required: true, hint: "0 for normal, 128 for critical." },
-				{ key: "tag", label: "Tag", placeholder: "issue", required: true, hint: "issue, issuewild, or iodef." },
+				{ key: "tag", label: "Tag", placeholder: "issue", required: true, hint: "issue, issuewild or iodef." },
 				{ key: "value", label: "Value", placeholder: "letsencrypt.org", required: true, hint: "CA domain or reporting URL." },
 			],
 			build: data => `${data.flags} ${data.tag} ${quote(data.content)}`,
@@ -1451,7 +1510,7 @@ async function openDNSSECModal() {
 
 	let details, busy = false;
 
-	title.textContent = `DNSSEC — ${zoneName}`;
+	title.textContent = `DNSSEC - ${zoneName}`;
 	title.id = "dnssec-modal-title";
 
 	modal.setAttribute("role", "dialog");
@@ -1576,6 +1635,14 @@ async function openDNSSECModal() {
 			providerField = make("label", "field"),
 			providerLabel = make("span", "field-title"),
 			provider = make("select", "input"),
+			algorithmField = make("label", "field"),
+			algorithmLabel = make("span", "field-title"),
+			algorithm = make("select", "input"),
+			algorithmRating = make("span", "field-title"),
+			algorithmSecurity = make("span", "field-hint"),
+			algorithmCompatibility = make("span", "field-hint"),
+			algorithmRatingsHelp = make("span", "field-hint"),
+			algorithmHelp = make("span", "field-hint"),
 			nameserverField = make("label", "field"),
 			nameserverLabel = make("span", "field-title"),
 			nameservers = make("textarea", "textarea"),
@@ -1586,7 +1653,7 @@ async function openDNSSECModal() {
 			save = make("button", "button"),
 			disable = make("button", "ghost", "danger");
 
-		status.textContent = `${details.enabled ? "Enabled" : "Disabled"} · ${details.provider} · ${details.status}`;
+		status.textContent = `${details.enabled ? "Enabled" : "Disabled"} - ${details.provider} - ${details.status}`;
 
 		help.textContent = "Plat generates and retains a combined signing key and renews signatures automatically. For public validation, delegate your zone to nameservers serving plat on UDP and TCP port 53, then publish the DS below at your registrar. Signing does not automatically update your registrar or verify delegation.";
 
@@ -1606,6 +1673,46 @@ async function openDNSSECModal() {
 
 		providerField.append(providerLabel, provider);
 
+		algorithmLabel.textContent = "Signing algorithm";
+
+		for (const choice of DNSSECAlgorithms) {
+			const option = make("option");
+
+			option.value = choice.value;
+			option.textContent = `${choice.value} ${choice.name} - ${choice.rating} - ${choice.summary}`;
+
+			algorithm.append(option);
+		}
+
+		algorithm.value = details.provider === "plat" ? (details.algorithm || "15") : "15";
+		algorithm.disabled = details.enabled;
+		algorithmRating.id = "dnssec-algorithm-rating";
+		algorithmSecurity.id = "dnssec-algorithm-security";
+		algorithmCompatibility.id = "dnssec-algorithm-compatibility";
+		algorithmRatingsHelp.id = "dnssec-algorithm-ratings-help";
+		algorithmHelp.id = "dnssec-algorithm-help";
+		algorithm.setAttribute("aria-describedby", `${algorithmRating.id} ${algorithmSecurity.id} ${algorithmCompatibility.id} ${algorithmRatingsHelp.id} ${algorithmHelp.id}`);
+
+		algorithmRatingsHelp.textContent = "For classical security, choose the highest supported rating: 224-bit > 192-bit > 128-bit. Quantum-resistant adds protection against quantum attacks; it is not a higher classical bit-strength rating and needs algorithm 18 support end-to-end.";
+
+		algorithmHelp.textContent = details.enabled
+			? "To change algorithms, remove the parent DS, wait for cached copies to expire, then disable DNSSEC and re-enable with your new choice."
+			: "Check your registrar or parent-zone operator's supported DS algorithms before enabling. Changing a retained key's algorithm creates a new key and DS; publish the new DS after enabling.";
+
+		const updateAlgorithm = () => {
+			const choice = DNSSECAlgorithms.find(candidate => candidate.value === algorithm.value);
+
+			algorithmRating.textContent = `Security rating: ${choice.rating}`;
+			algorithmSecurity.textContent = `Security: ${choice.security}`;
+			algorithmCompatibility.textContent = `Compatibility: ${choice.compatibility}`;
+		};
+
+		algorithm.addEventListener("change", updateAlgorithm);
+
+		updateAlgorithm();
+
+		algorithmField.append(algorithmLabel, algorithm, algorithmRating, algorithmSecurity, algorithmCompatibility, algorithmRatingsHelp, algorithmHelp);
+
 		nameserverLabel.textContent = "Plat authoritative nameservers (one per line)";
 		nameservers.rows = 3;
 		nameservers.placeholder = "ns1.example.com\nns2.example.com";
@@ -1619,8 +1726,9 @@ async function openDNSSECModal() {
 
 		const updateProvider = () => {
 			nameserverField.hidden = provider.value !== "plat";
+			algorithmField.hidden = provider.value !== "plat";
 			help.textContent = provider.value === "cloudflare"
-				? "Cloudflare generates the keys and signs the zone. Plat relays queries to Cloudflare's authoritative nameservers. Publish Cloudflare's DS at your registrar and keep the delegation pointed to Cloudflare. The API token needs Zone DNS Settings write access."
+				? "Cloudflare chooses the algorithm, generates the keys and signs the zone. Plat relays queries to Cloudflare's authoritative nameservers. Publish Cloudflare's DS at your registrar and keep the delegation pointed to Cloudflare. The API token needs Zone DNS Settings write access."
 				: "Plat generates and retains a combined signing key and renews signatures automatically. For public validation, delegate your zone to nameservers serving plat on UDP and TCP port 53, then publish the DS below at your registrar. Signing does not automatically update your registrar or verify delegation.";
 		};
 
@@ -1658,13 +1766,13 @@ async function openDNSSECModal() {
 
 		updateProvider();
 
-		content.append(status, help, providerField, nameserverField);
+		content.append(status, help, providerField, algorithmField, nameserverField);
 
 		if (details.ds_record) {
 			showValue("DS Record", details.ds_record, "Publish this in the parent zone through your registrar, not as a record inside this zone.", true);
 			showValue("Digest", details.digest);
 			showValue("Digest Type", details.digest_type, details.digest_type === "2" ? "2 = SHA-256" : "");
-			showValue("Algorithm", details.algorithm, details.algorithm === "15" ? "15 = Ed25519" : details.algorithm === "13" ? "13 = ECDSA P-256 / SHA-256" : "");
+			showValue("Algorithm", details.algorithm, DNSSECAlgorithms.find(choice => choice.value === details.algorithm)?.name || "");
 			showValue("Public Key", details.public_key, "", true);
 			showValue("Key Tag", details.key_tag);
 			showValue("Flags", details.flags, "257 = zone signing key + secure entry point (combined signing key). Cloudflare may use separate keys.");
@@ -1712,6 +1820,7 @@ async function openDNSSECModal() {
 					body: JSON.stringify({
 						enabled: enabled,
 						provider: provider.value,
+						algorithm: provider.value === "plat" ? Number(algorithm.value) : undefined,
 						nameservers: nameservers.value.split(/[\s,]+/).filter(Boolean),
 						parent_ds_removed: removed.checked,
 					}),
@@ -2662,7 +2771,7 @@ function openEmailProtectionModal() {
 
 	let busy = false;
 
-	title.textContent = `Email protection — ${zoneName}`;
+	title.textContent = `Email protection - ${zoneName}`;
 	title.id = "email-protection-title";
 
 	modal.setAttribute("role", "dialog");
@@ -2674,7 +2783,7 @@ function openEmailProtectionModal() {
 	closeButton.textContent = "Close";
 
 	help.id = "email-protection-help";
-	help.textContent = "For domains that do not send email. Add SPF, DKIM, and DMARC policies asking receiving mail servers to reject mail claiming to come from this domain or its subdomains. Change these records before setting up email. Existing email records are checked again before creation.";
+	help.textContent = "For domains that do not send email. Add SPF, DKIM and DMARC policies asking receiving mail servers to reject mail claiming to come from this domain or its subdomains. Change these records before setting up email. Existing email records are checked again before creation.";
 
 	emailTitle.textContent = "Reporting email address (optional)";
 
@@ -2685,7 +2794,7 @@ function openEmailProtectionModal() {
 	email.setAttribute("aria-describedby", "email-protection-reporting-help");
 
 	reportingHelp.id = "email-protection-reporting-help";
-	reportingHelp.textContent = "Receive aggregate DMARC reports. An address on another domain may need authorization from that domain’s email provider.";
+	reportingHelp.textContent = "Receive aggregate DMARC reports. An address on another domain may need authorization from that domain's email provider.";
 
 	feedback.setAttribute("role", "status");
 	feedback.hidden = true;
@@ -2723,10 +2832,10 @@ function openEmailProtectionModal() {
 		return valueContent;
 	};
 
-	recordPreview("SPF · Deny all senders", zoneName, "v=spf1 -all");
-	recordPreview("DKIM · Revoke signing keys", "*._domainkey", "v=DKIM1; p=");
+	recordPreview("SPF - Deny all senders", zoneName, "v=spf1 -all");
+	recordPreview("DKIM - Revoke signing keys", "*._domainkey", "v=DKIM1; p=");
 
-	const dmarcValue = recordPreview("DMARC · Reject spoofed mail", "_dmarc", "");
+	const dmarcValue = recordPreview("DMARC - Reject spoofed mail", "_dmarc", "");
 
 	const updatePreview = () => {
 		const reportingEmail = email.value.trim(),

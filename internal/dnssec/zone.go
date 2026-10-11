@@ -556,7 +556,7 @@ func BuildZone[Record interface{ GetRR() dns.RR }](name string, records map[stri
 				Expiration: uint32(now.Add(DNSSECLifetime).Unix()),
 			}
 
-			err := signature.Sign(config.Signer, set.Records)
+			err := signRRSet(signature, config.Signer, set.Records)
 			if err != nil {
 				return nil, fmt.Errorf("sign %s %s: %w", owner, dns.TypeToString[typ], err)
 			}

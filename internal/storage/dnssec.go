@@ -3,8 +3,6 @@ package storage
 import (
 	"context"
 	"crypto"
-	"crypto/ed25519"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -58,6 +56,7 @@ type DNSSECDetails struct {
 type DNSSECRequest struct {
 	Enabled         bool     `json:"enabled"`
 	Provider        string   `json:"provider"`
+	Algorithm       uint8    `json:"algorithm"`
 	Nameservers     []string `json:"nameservers"`
 	ParentDSRemoved bool     `json:"parent_ds_removed"`
 }
@@ -170,8 +169,16 @@ func (s *Storage) DNSSECDetails(ctx context.Context, id, provider string) (DNSSE
 		return DNSSECDetails{}, errors.New("unknown DNSSEC provider")
 	}
 
-	if config == nil || config.Provider != "plat" {
+	if config == nil {
 		return DNSSECDetails{Provider: "plat", Status: "disabled"}, nil
+	}
+
+	if config.Provider != "plat" {
+		retained := *config
+		retained.Provider = "plat"
+		retained.Enabled = false
+
+		return retained.details(), nil
 	}
 
 	return config.details(), nil
@@ -200,6 +207,20 @@ func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSEC
 
 	if request.Provider != "plat" && request.Provider != "cloudflare" {
 		return DNSSECDetails{}, errors.New("unknown DNSSEC provider")
+	}
+
+	if request.Algorithm != 0 {
+		if request.Provider == "cloudflare" {
+			return DNSSECDetails{}, errors.New("Cloudflare manages its own DNSSEC algorithm")
+		}
+
+		if !dnssec.SupportedAlgorithm(request.Algorithm) {
+			return DNSSECDetails{}, errors.New("unsupported DNSSEC algorithm: choose 8, 10, 13, 14, 15, 16 or 18")
+		}
+
+		if previous != nil && previous.Enabled && previous.key != nil && request.Algorithm != previous.key.Algorithm {
+			return DNSSECDetails{}, errors.New("disable DNSSEC and remove the parent DS before changing algorithm")
+		}
 	}
 
 	if previous != nil && previous.Enabled {
@@ -252,6 +273,19 @@ func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSEC
 			return DNSSECDetails{}, err
 		}
 	} else {
+		algorithm := request.Algorithm
+		if algorithm == 0 {
+			algorithm = dns.ED25519
+
+			if config.key != nil {
+				algorithm = config.key.Algorithm
+			}
+		}
+
+		if !request.Enabled && config.key != nil && algorithm != config.key.Algorithm {
+			return DNSSECDetails{}, errors.New("select the DNSSEC algorithm when enabling signing")
+		}
+
 		if request.Enabled {
 			config.Nameservers, err = normalizeNameservers(request.Nameservers)
 			if err != nil {
@@ -259,8 +293,8 @@ func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSEC
 			}
 		}
 
-		if config.key == nil {
-			err = config.generateKey(zone.Name)
+		if config.key == nil || config.key.Algorithm != algorithm {
+			err = config.generateKey(zone.Name, algorithm)
 			if err != nil {
 				return DNSSECDetails{}, err
 			}
@@ -305,20 +339,22 @@ func (s *Storage) ConfigureDNSSEC(ctx context.Context, id string, request DNSSEC
 	return config.details(), nil
 }
 
-func (c *DNSSECConfig) generateKey(name string) error {
+func (c *DNSSECConfig) generateKey(name string, algorithm uint8) error {
 	c.key = &dns.DNSKEY{
-		Hdr:   dns.RR_Header{Name: dns.Fqdn(name), Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: DNSSECTTL},
-		Flags: 257, Protocol: 3, Algorithm: dns.ED25519,
+		Hdr:       dns.RR_Header{Name: dns.Fqdn(name), Rrtype: dns.TypeDNSKEY, Class: dns.ClassINET, Ttl: DNSSECTTL},
+		Flags:     257,
+		Protocol:  3,
+		Algorithm: algorithm,
 	}
 
-	private, err := c.key.Generate(256)
+	signer, encoded, err := dnssec.GenerateKey(c.key)
 	if err != nil {
 		return err
 	}
 
-	c.signer = private.(crypto.Signer)
+	c.signer = signer
 	c.DNSKEY = strings.ReplaceAll(c.key.String(), "\t", " ")
-	c.PrivateKey = c.key.PrivateKeyString(private)
+	c.PrivateKey = encoded
 
 	return nil
 }
@@ -330,25 +366,13 @@ func (c *DNSSECConfig) loadKey(name string) error {
 	}
 
 	key, ok := record.(*dns.DNSKEY)
-	if !ok || key.Hdr.Name != dns.Fqdn(name) || key.Flags != 257 || key.Protocol != 3 || key.Algorithm != dns.ED25519 {
+	if !ok || key.Hdr.Name != dns.Fqdn(name) || key.Flags != 257 || key.Protocol != 3 || !dnssec.SupportedAlgorithm(key.Algorithm) {
 		return errors.New("invalid signing DNSKEY")
 	}
 
-	private, err := key.NewPrivateKey(c.PrivateKey)
+	signer, err := dnssec.LoadKey(key, c.PrivateKey)
 	if err != nil {
 		return err
-	}
-
-	signer, ok := private.(ed25519.PrivateKey)
-	if !ok || len(signer) != ed25519.PrivateKeySize {
-		return errors.New("invalid Ed25519 private key")
-	}
-
-	// NewPrivateKey reconstructs this key from its seed; its suffix is the derived public key.
-	public := signer[ed25519.SeedSize:]
-
-	if base64.StdEncoding.EncodeToString(public) != key.PublicKey {
-		return errors.New("private key does not match DNSKEY")
 	}
 
 	c.key = key

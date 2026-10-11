@@ -1,8 +1,9 @@
 module plat
 
-go 1.26.4
+go 1.27.0
 
 require (
+	github.com/cloudflare/circl v1.6.5
 	github.com/cloudflare/cloudflare-go/v7 v7.12.0
 	github.com/coalaura/plain v1.6.5
 	github.com/coalaura/schgo v0.3.2
@@ -21,6 +22,7 @@ require (
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.2 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/term v0.47.0 // indirect
 )

@@ -6,6 +6,8 @@
 
 Download a pre-built release from the [releases page](https://github.com/coalaura/plat/releases/latest).
 
+Building from source requires Go 1.27 or later for standard-library ML-DSA support.
+
 ![Records view](.github/records.png)
 *Browse zones and records in one view.*
 
@@ -58,7 +60,21 @@ Setting `cloudflare.token` enables Cloudflare zone import at startup and the exi
 
 ## DNSSEC
 
-Select a zone and open **DNSSEC** in the records toolbar. **Plat** is the default signing provider for both local zones and imported Cloudflare zones. Enter the nameservers that will serve the zone from plat and select **Enable DNSSEC**. Plat generates an Ed25519 combined signing key (algorithm 15, flags 257), publishes DNSKEY and RRSIG records and uses signed NSEC records for authenticated denial of existence. Responses support aliases, wildcards, empty non-terminals and signed or unsigned child delegations. Recursive resolvers use these records to validate the zone.
+Select a zone and open **DNSSEC** in the records toolbar. **Plat** is the default signing provider for both local zones and imported Cloudflare zones. Choose a signing algorithm, enter the nameservers that will serve the zone from plat and select **Enable DNSSEC**. The selector displays security and compatibility guidance for each algorithm. Plat generates a combined signing key (flags 257), publishes DNSKEY and RRSIG records and uses signed NSEC records for authenticated denial of existence. Responses support aliases, wildcards, empty non-terminals and signed or unsigned child delegations. Recursive resolvers use these records to validate the zone.
+
+| Algorithm | Security rating | Security | Compatibility |
+| --- | --- | --- | --- |
+| **8 RSA/SHA-256** | **Strong (128-bit)** | 3072-bit RSA, approximately 128-bit classical security; not quantum-resistant. SHA-256 is the hash, not the key's security strength. | Long-established registrar and validator support, including older deployments. A useful compatibility choice, with larger keys and signatures than ECDSA/Ed25519. |
+| **10 RSA/SHA-512** | **Strong (128-bit)** | 3072-bit RSA, approximately 128-bit classical security; not quantum-resistant. SHA-512 is the hash, not the key's security strength. | Broad validator support, but registrar support varies and signatures are larger than ECDSA/Ed25519. IANA does not recommend it for new signing. |
+| **13 ECDSA/SHA-256** | **Strong (128-bit)** | P-256, approximately 128-bit classical security; not quantum-resistant. | Widely supported by registrars and validators; compact keys and signatures. |
+| **14 ECDSA/SHA-384** | **Very strong (192-bit)** | P-384, approximately 192-bit classical security; not quantum-resistant. | Modern validator support; registrar support is less common than algorithm 13. |
+| **15 Ed25519** | **Strong (128-bit)** | Approximately 128-bit classical security; not quantum-resistant. | Plat's default. Modern validator support, but some registrars do not accept it. |
+| **16 Ed448** | **Very strong (224-bit)** | Approximately 224-bit classical security, the highest classical strength of these conventional choices; not quantum-resistant. | Less widely deployed than Ed25519 and ECDSA P-256; confirm registrar and validator support. Public keys are 57 bytes and signatures are 114 bytes. |
+| **18 ML-DSA-44** | **Quantum-resistant** | Post-quantum, NIST security category 2; not directly comparable to classical bit-strength ratings. | Newly assigned DNSSEC algorithm with limited registrar and validator support. Public keys are 1,312 bytes and signatures are 2,420 bytes, often requiring DNS over TCP. |
+
+For classical security, choose the highest supported rating: **224-bit > 192-bit > 128-bit**. **Quantum-resistant** denotes protection against quantum attacks, not a higher classical bit-strength rating; it requires algorithm 18 support end-to-end. Algorithms with equivalent strength share a rating, regardless of their hash names. **Ed25519 (15)** remains the default.
+
+Confirm that your registrar or parent-zone operator accepts DS records for your selected algorithm and that your validating resolvers support it. Plat cannot discover or guarantee that external support; a validator that does not support the algorithm cannot authenticate its signatures. ML-DSA-44 uses pure ML-DSA with an empty context as specified by the [DNSSEC ML-DSA-44 specification](https://www.ietf.org/archive/id/draft-westerbaan-dnssec-mldsa-03.html), currently an Internet-Draft referenced by the [IANA algorithm registry](https://www.iana.org/assignments/dns-sec-alg-numbers/dns-sec-alg-numbers.xhtml). DS digests use SHA-256 (digest type 2) for every signing algorithm.
 
 The modal exposes copyable **DS Record**, **Digest**, **Digest Type**, **Algorithm**, **Public Key**, **Key Tag**, **Flags**, **Protocol** and **DNSKEY Record** values. The DS uses SHA-256 (digest type 2). Signing status means signatures are being served; it does not assert that public delegation and the parent DS have been configured or validated.
 
@@ -66,13 +82,13 @@ For public DNSSEC, configure your registrar's nameserver delegation to point to 
 
 Plat supplies the configured apex NS records and generates an SOA when none is present. Generated DNSSEC records are served automatically rather than inserted into the editable records table. Imported records continue using Cloudflare's existing edit/sync behavior, while plat supplies its own signatures when selected as signer.
 
-Keys and per-zone settings are saved atomically with records in `data/records.yml`, with owner-only file permissions where supported and excluded from Git. Existing `data/dnssec.yml` settings are loaded compatibly and migrated with committed records; include both files in backups while upgrading. Losing the private key requires a new key and a parent DS change. Signatures have a 14-day validity period and refresh on demand after 24 hours, including after a period without queries. Record edits, deletions, DynDNS updates and Cloudflare sync invalidate the signed snapshot immediately. Signature renewal does not change the authoritative SOA serial. The signing key remains stable across restarts and disable/re-enable cycles so the parent DS remains stable; key rollover requires coordination with the parent zone.
+Keys and per-zone settings are saved atomically with records in `data/records.yml`, with owner-only file permissions where supported and excluded from Git. Existing `data/dnssec.yml` settings are loaded compatibly and migrated with committed records; include both files in backups while upgrading. Losing the private key requires a new key and a parent DS change. Signatures have a 14-day validity period and refresh on demand after 24 hours, including after a period without queries. Record edits, deletions, DynDNS updates and Cloudflare sync invalidate the signed snapshot immediately. Signature renewal does not change the authoritative SOA serial. The signing key remains stable across restarts and disable/re-enable cycles with the same algorithm so the parent DS remains stable. To change algorithms, remove the parent DS, wait for cached copies to expire, disable DNSSEC, then re-enable with the new algorithm and publish the new DS. Algorithm changes generate a new key and cannot be made while signing is enabled.
 
 For a connected Cloudflare zone, choose **Cloudflare** to inspect existing Cloudflare DNSSEC, enable it and copy its registrar values. The Cloudflare API token needs **Zone DNS Settings: Read/Write** and access to the zone. Cloudflare manages its own signing keys; plat relays queries for a Cloudflare-signed zone to Cloudflare's authoritative nameservers. Keep the public delegation pointed to Cloudflare in this mode.
 
 Before disabling DNSSEC, remove the parent DS and allow its cached copies to expire, then confirm this in the modal. Disable the current provider before switching providers or deleting a signed local zone. Plat retains its key when disabled.
 
-Authenticated management endpoints are `GET /-/{zone}/dnssec` and `PUT /-/{zone}/dnssec`. GET accepts `?provider=plat` or `?provider=cloudflare` to inspect a provider. PUT accepts `enabled`, `provider`, `nameservers` and `parent_ds_removed`; private signing keys are never returned by the API.
+Authenticated management endpoints are `GET /-/{zone}/dnssec` and `PUT /-/{zone}/dnssec`. GET accepts `?provider=plat` or `?provider=cloudflare` to inspect a provider. PUT accepts `enabled`, `provider`, `algorithm`, `nameservers` and `parent_ds_removed`; `algorithm` is an optional number (`8`, `10`, `13`, `14`, `15`, `16` or `18`) for plat signing. Omitting it preserves the retained key's algorithm or defaults to Ed25519 (15) for a new key. Cloudflare manages its own algorithm and rejects an explicit selection. Private signing keys are never returned by the API.
 
 ## Clustering
 
