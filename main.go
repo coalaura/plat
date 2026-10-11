@@ -27,10 +27,6 @@ func main() {
 	err = config.Cluster.Prepare()
 	log.MustFail(err)
 
-	if config.Cluster.TLS.CA == "" {
-		log.Printf("Replication identity: %s; copy slave certificates into %s and restart to authorize them", config.Cluster.TLS.Certificate, config.Cluster.TrustedClients)
-	}
-
 	log.Println("Loading storage...")
 
 	storage, err := LoadStorage(config)

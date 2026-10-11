@@ -17,19 +17,16 @@ import (
 type TLSFiles struct {
 	Certificate string `yaml:"certificate"`
 	Key         string `yaml:"key"`
-	CA          string `yaml:"ca,omitempty"`
 }
 
 type MasterConfig struct {
-	Enabled        bool              `yaml:"enabled"`
-	TLS            TLSFiles          `yaml:"tls"`
-	Clients        map[string]string `yaml:"clients"`
-	TrustedClients string            `yaml:"trusted_clients"`
+	Enabled        bool     `yaml:"enabled"`
+	TLS            TLSFiles `yaml:"tls"`
+	TrustedClients string   `yaml:"trusted_clients"`
 }
 
 type ClientConfig struct {
 	Address       string   `yaml:"address"`
-	ServerName    string   `yaml:"server_name"`
 	TLS           TLSFiles `yaml:"tls"`
 	TrustedMaster string   `yaml:"trusted_master"`
 }
@@ -46,36 +43,15 @@ func (c MasterConfig) TLSConfig() (*tls.Config, error) {
 	}
 
 	pool := x509.NewCertPool()
+	authorized := make(map[string]bool)
 
-	authorized := make(map[string]bool, len(c.Clients))
-
-	if c.TLS.CA == "" {
-		err = loadTrustedClients(c.TrustedClients, pool, authorized)
-	} else {
-		if c.TrustedClients != "" {
-			return nil, errors.New("trusted_clients cannot be combined with tls.ca")
-		}
-
-		if len(c.Clients) == 0 {
-			return nil, errors.New("at least one slave certificate must be individually authorized")
-		}
-
-		for name, fingerprint := range c.Clients {
-			fingerprint = strings.ToLower(fingerprint)
-			decoded, decodeErr := hex.DecodeString(fingerprint)
-
-			if decodeErr != nil || len(decoded) != sha256.Size || name == "" || authorized[fingerprint] {
-				return nil, fmt.Errorf("invalid or duplicate certificate fingerprint for %q", name)
-			}
-
-			authorized[fingerprint] = true
-		}
-
-		err = loadTrustFile(c.TLS.CA, pool, nil)
-	}
-
+	err = loadTrustedClients(c.TrustedClients, pool, authorized)
 	if err != nil {
 		return nil, err
+	}
+
+	if len(authorized) == 0 {
+		log.Printf("No trusted slave certificates in %s; copy slave public certificates there and restart to authorize replication\n", c.TrustedClients)
 	}
 
 	settings.ClientAuth = tls.RequireAndVerifyClientCert
@@ -102,44 +78,28 @@ func (c ClientConfig) TLSConfig() (*tls.Config, error) {
 		return nil, err
 	}
 
-	if c.ServerName == "" {
-		return nil, errors.New("verified master server_name is required")
-	}
-
 	settings, err := loadTLS(c.TLS)
 	if err != nil {
 		return nil, err
 	}
 
 	pool := x509.NewCertPool()
+	authorized := make(map[string]bool, 1)
 
-	var authorized map[string]bool
-
-	if c.TLS.CA == "" {
-		authorized = make(map[string]bool, 1)
-
-		err = loadTrustFile(c.TrustedMaster, pool, authorized)
-	} else {
-		if c.TrustedMaster != "" {
-			return nil, errors.New("trusted_master cannot be combined with tls.ca")
-		}
-
-		err = loadTrustFile(c.TLS.CA, pool, nil)
+	err = loadTrustFile(c.TrustedMaster, pool, authorized)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("copy the master's public certificate to %q: %w", c.TrustedMaster, err)
 	}
 
 	if err != nil {
-		if c.TLS.CA == "" {
-			return nil, fmt.Errorf("copy the master's public certificate to %q: %w", c.TrustedMaster, err)
-		}
-
-		return nil, fmt.Errorf("load master CA: %w", err)
+		return nil, fmt.Errorf("load trusted master certificate %q: %w", c.TrustedMaster, err)
 	}
 
 	settings.RootCAs = pool
-	settings.ServerName = c.ServerName
+	settings.ServerName = MasterServerName
 
 	settings.VerifyConnection = func(state tls.ConnectionState) error {
-		if authorized != nil && (len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 || !authorized[Fingerprint(state.PeerCertificates[0])]) {
+		if len(state.VerifiedChains) == 0 || len(state.PeerCertificates) == 0 || !authorized[Fingerprint(state.PeerCertificates[0])] {
 			return errors.New("master certificate is not authorized")
 		}
 
@@ -223,10 +183,7 @@ func loadTrustFile(path string, pool *x509.CertPool, authorized map[string]bool)
 		}
 
 		pool.AddCert(certificate)
-
-		if authorized != nil {
-			authorized[Fingerprint(certificate)] = true
-		}
+		authorized[Fingerprint(certificate)] = true
 
 		count++
 		data = rest

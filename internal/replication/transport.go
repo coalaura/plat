@@ -123,12 +123,14 @@ func dialReplication(ctx context.Context, address string, settings *tls.Config, 
 	config.Protocol = []string{websocketProtocol}
 	config.Dialer = &net.Dialer{Timeout: timeout}
 
+	config.Header.Set("User-Agent", "plat-slave")
+
 	connectionContext, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	connection, err := config.DialContext(connectionContext)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open replication WebSocket: %w", err)
 	}
 
 	connection.PayloadType = websocket.BinaryFrame
@@ -141,7 +143,7 @@ func dialReplication(ctx context.Context, address string, settings *tls.Config, 
 	if err != nil {
 		stream.Close()
 
-		return nil, err
+		return nil, fmt.Errorf("replication TLS handshake: %w", err)
 	}
 
 	return secure, nil

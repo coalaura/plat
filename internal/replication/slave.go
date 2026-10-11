@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/rand/v2"
 	"time"
 
@@ -29,7 +30,7 @@ func (s *Slave) Run(ctx context.Context) error {
 		return err
 	}
 
-	if s.TLS == nil || s.TLS.InsecureSkipVerify || s.TLS.ServerName == "" || s.TLS.MinVersion != tls.VersionTLS13 {
+	if s.TLS == nil || s.TLS.InsecureSkipVerify || s.TLS.ServerName != MasterServerName || s.TLS.MinVersion != tls.VersionTLS13 {
 		return errors.New("verified TLS 1.3 master identity required")
 	}
 
@@ -47,12 +48,20 @@ func (s *Slave) Run(ctx context.Context) error {
 
 		s.health.connection(false, err)
 
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
 		if time.Since(started) > 30*time.Second {
 			backoff = 250 * time.Millisecond
 		}
 
 		jitter := time.Duration(rand.Int64N(int64(backoff / 2)))
-		timer := time.NewTimer(backoff + jitter)
+		delay := backoff + jitter
+
+		log.Warnf("Replication with %s failed: %v; retrying in %s\n", s.Address, err, delay.Round(time.Millisecond))
+
+		timer := time.NewTimer(delay)
 
 		select {
 		case <-ctx.Done():
@@ -76,13 +85,20 @@ func (s *Slave) connect(ctx context.Context, timing Timing) error {
 
 	s.health.connection(true, nil)
 
+	log.Printf("Connected to replication master at %s\n", s.Address)
+
 	peer := newSession(connection, timing, &s.health)
 	defer peer.Close()
 
 	stop := context.AfterFunc(ctx, peer.fail)
 	defer stop()
 
-	return s.synchronize(ctx, peer)
+	err = s.synchronize(ctx, peer)
+	if err != nil {
+		return fmt.Errorf("synchronize replica: %w", err)
+	}
+
+	return nil
 }
 
 func (s *Slave) synchronize(ctx context.Context, peer *session) error {
@@ -133,6 +149,10 @@ func (s *Slave) synchronize(ctx context.Context, peer *session) error {
 			}
 
 			s.health.applied(staged.Epoch, staged.Sequence)
+
+			if event.Kind == "complete" {
+				log.Printf("Replication synchronized with %s at revision %d\n", s.Address, staged.Sequence)
+			}
 		}
 
 		ack := acknowledgment{Epoch: staged.Epoch, Sequence: staged.Sequence, Applied: complete}

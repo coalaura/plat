@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/x509"
 	"errors"
 	"net"
 	"os"
@@ -13,43 +12,23 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-type HTTPSConfig struct {
-	Address     string   `yaml:"address"`
-	Certificate string   `yaml:"certificate"`
-	Key         string   `yaml:"key"`
-	Names       []string `yaml:"names,omitempty"`
+type HTTPConfig struct {
+	Address string `yaml:"address"`
 }
 
 type Config struct {
-	Master     replication.ClientConfig `yaml:"master"`
-	Checkpoint string                   `yaml:"checkpoint"`
-	DNS        dnsserver.Config         `yaml:"dns"`
-	HTTPS      HTTPSConfig              `yaml:"https"`
+	Master replication.ClientConfig `yaml:"master"`
+	DNS    dnsserver.Config         `yaml:"dns"`
+	HTTP   HTTPConfig               `yaml:"http"`
 }
 
 func (c *Config) Prepare() error {
-	err := c.Master.Prepare()
-	if err != nil {
-		return err
-	}
-
-	names := c.HTTPS.Names
-	if len(names) == 0 {
-		hostname, hostnameErr := os.Hostname()
-		if hostnameErr != nil {
-			return hostnameErr
-		}
-
-		names = []string{hostname, "localhost", "127.0.0.1", "::1"}
-	}
-
-	files := replication.TLSFiles{Certificate: c.HTTPS.Certificate, Key: c.HTTPS.Key}
-	return files.EnsureCertificate(names, x509.ExtKeyUsageServerAuth)
+	return c.Master.Prepare()
 }
 
 func (c *Config) Validate() error {
 	if c.Master.Address == "" {
-		return errors.New("set master.address to the master's existing http:// or https:// base URL in slave.yml and exchange the generated public certificates, then restart")
+		return errors.New("set master.address to the master's existing http:// or https:// base URL in slave.yml, then restart")
 	}
 
 	err := c.Master.ValidateAddress()
@@ -57,12 +36,12 @@ func (c *Config) Validate() error {
 		return err
 	}
 
-	if c.Checkpoint == "" || c.DNS.Port < 1 || c.DNS.Port > 65535 || !c.DNS.Enabled {
-		return errors.New("checkpoint path and enabled DNS port (1-65535) are required")
+	if c.DNS.Port < 1 || c.DNS.Port > 65535 || !c.DNS.Enabled {
+		return errors.New("enabled DNS port (1-65535) is required")
 	}
 
-	if c.HTTPS.Address == "" {
-		return errors.New("https.address is required")
+	if c.HTTP.Address == "" {
+		return errors.New("http.address is required")
 	}
 
 	if c.DNS.FallbackIP != "" {
@@ -79,16 +58,19 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func loadConfig() (Config, error) {
+func LoadConfig() (Config, error) {
 	config := Config{
 		Master: replication.ClientConfig{
-			ServerName:    "plat-master",
 			TLS:           replication.TLSFiles{Certificate: "data/certs/slave.crt", Key: "data/certs/slave.key"},
 			TrustedMaster: "data/certs/master.crt",
 		},
-		Checkpoint: "data/slave.json",
-		DNS:        dnsserver.Config{Enabled: true, Port: 53},
-		HTTPS:      HTTPSConfig{Address: ":443", Certificate: "data/certs/doh.crt", Key: "data/certs/doh.key"},
+		DNS: dnsserver.Config{
+			Enabled:       true,
+			Port:          53,
+			FallbackIP:    "9.9.9.9",
+			FallbackHTTPS: "https://dns.quad9.net/dns-query",
+		},
+		HTTP: HTTPConfig{Address: ":8080"},
 	}
 
 	data, err := os.ReadFile("slave.yml")
@@ -106,8 +88,7 @@ func loadConfig() (Config, error) {
 		return Config{}, err
 	}
 
-	// Leave replication defaults to Prepare so existing CA configurations do not
-	// inherit automatic-mode trust settings from the first-run template.
+	// Apply identity path defaults together in Prepare so partial overrides fail validation.
 	config.Master = replication.ClientConfig{}
 
 	err = yaml.UnmarshalWithOptions(data, &config, yaml.Strict())

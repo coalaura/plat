@@ -127,6 +127,10 @@ func (m *Master) accept(ctx context.Context, connection net.Conn, timing Timing)
 	cancel()
 
 	if err != nil {
+		if ctx.Err() == nil {
+			log.Warnf("Replication TLS handshake from %s failed: %v\n", connection.RemoteAddr(), err)
+		}
+
 		return
 	}
 
@@ -159,6 +163,10 @@ func (m *Master) accept(ctx context.Context, connection net.Conn, timing Timing)
 	err = m.synchronize(ctx, peer, state)
 
 	state.connection(false, err)
+
+	if err != nil && ctx.Err() == nil {
+		log.Warnf("Replication to slave %s failed: %v\n", id, err)
+	}
 
 	m.mx.Lock()
 
