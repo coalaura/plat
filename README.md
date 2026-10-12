@@ -52,6 +52,14 @@ Set `dns.domain` to a hostname such as `dns.example.com` (without a scheme, port
 
 Matching uses the HTTP `Host` header, ignoring case, an optional port and a trailing dot. It matches only the configured hostname, not its subdomains. When using a reverse proxy, preserve the original `Host` header; `Forwarded` and `X-Forwarded-Host` do not override it. Use another hostname for the panel and for slave `master.address` replication URLs.
 
+### Resolving the local hostname
+
+Both master and slave automatically resolve their own OS hostname for queries whose source address is loopback or one of that machine's interface addresses. Matching ignores case and a trailing dot and uses the exact OS hostname, without adding short-name or domain aliases. Local queries take precedence over stored zones and fallback resolvers: A returns `127.0.0.1`, AAAA returns `::1`, ANY returns both and other record types return an empty successful response. These synthetic answers are unsigned and have a zero TTL. Other callers use normal zone and fallback resolution.
+
+This applies to UDP/TCP DNS and direct DoH requests. DoH requests containing `Forwarded`, any `X-Forwarded-*` header, `X-Real-IP` or `Via` use normal resolution, regardless of header values. A reverse proxy must set a forwarding header on every request (for example, nginx `proxy_set_header X-Forwarded-For $remote_addr;`), because a local proxy that sends no forwarding headers is indistinguishable from a direct local client. Source-address checks identify the immediate DNS client; a local DNS forwarder also appears local.
+
+The hostname and interface addresses are captured at startup without using DNS lookups. Restart the node after changing its hostname or interface addresses.
+
 ## Zones and Cloudflare
 
 Sign in with `server.token` and select **New** in Zones to create a local zone. Add records there to serve them from plat's built-in DNS server or DNS-over-HTTPS endpoint. Local zones and their records are stored in `records.yml` and never sent to Cloudflare. You can delete a local zone after removing any DynDNS assignments to it.

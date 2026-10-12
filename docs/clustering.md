@@ -72,6 +72,8 @@ Expose both UDP and TCP port 53 and let nginx serve public HTTPS on port 443, pr
 
 The slave serves `/dns-query` over plain HTTP at `http.address` (default `:8080`). Configure nginx to terminate TLS with the public DoH certificate and forward requests to `http://<slave-address>:8080/dns-query`, preserving the query string and request body. DoH clients continue to use the public `https://dns.example.net/dns-query` URL.
 
+Set `proxy_set_header X-Forwarded-For $remote_addr;` on every proxied request so the slave can distinguish proxied traffic from direct local clients. Requests carrying forwarding headers use normal DNS resolution; direct local clients can resolve the slave's own OS hostname to loopback addresses as described in [local hostname resolution](../README.md#resolving-the-local-hostname).
+
 ## Monitoring slaves
 
 Open the **Slaves** tab in the master's authenticated frontend to see every trusted certificate loaded at startup, including slaves that have not connected. Names come from the certificate filenames; SHA-256 fingerprints distinguish identities. The view refreshes every five seconds while visible and has a manual refresh button.

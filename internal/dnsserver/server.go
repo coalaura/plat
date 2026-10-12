@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -31,7 +32,8 @@ type DNSServer struct {
 	tcp    *dns.Server
 	errors chan error
 
-	storage Storage
+	storage   Storage
+	localHost localHost
 
 	fallbackIP string
 	dnsClient  *dns.Client
@@ -42,6 +44,7 @@ type DNSServer struct {
 
 type DoHRequest struct {
 	body []byte
+	peer netip.Addr
 }
 
 var log = plain.New(plain.WithDate(plain.RFC3339Local))
@@ -100,6 +103,7 @@ func NewDoHRequest(r *http.Request) (*DoHRequest, error) {
 
 	return &DoHRequest{
 		body: body,
+		peer: directHTTPPeer(r),
 	}, nil
 }
 
@@ -107,8 +111,9 @@ func NewDNSServer(config Config, storage Storage) *DNSServer {
 	addr := fmt.Sprintf(":%d", config.Port)
 
 	server := &DNSServer{
-		storage: storage,
-		errors:  make(chan error, 2),
+		storage:   storage,
+		localHost: newLocalHost(),
+		errors:    make(chan error, 2),
 
 		fallbackIP: config.FallbackIP,
 		dnsClient:  new(dns.Client),
@@ -169,7 +174,7 @@ func (s *DNSServer) serve(server *dns.Server) {
 	}
 }
 
-func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
+func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
 	msg := new(dns.Msg)
 
 	msg.SetReply(r)
@@ -205,6 +210,10 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
 
 		msg.Rcode = dns.RcodeBadVers
 
+		return msg
+	}
+
+	if s.localHost.answer(r, msg, peer) {
 		return msg
 	}
 
@@ -249,7 +258,7 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg) *dns.Msg {
 }
 
 func (s *DNSServer) HandleDNSMessage(w dns.ResponseWriter, r *dns.Msg) {
-	resp := s.ProcessQuery(r)
+	resp := s.ProcessQuery(r, dnsPeer(w.RemoteAddr()))
 
 	if _, udp := w.RemoteAddr().(*net.UDPAddr); udp {
 		size := 512
@@ -273,7 +282,7 @@ func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DoHRequest) {
 		return
 	}
 
-	resp := s.ProcessQuery(msg)
+	resp := s.ProcessQuery(msg, r.peer)
 
 	resp.Id = 0
 
@@ -359,4 +368,37 @@ func (s *DNSServer) ExchangeDoH(r *dns.Msg) (*dns.Msg, error) {
 	}
 
 	return respMsg, nil
+}
+
+func dnsPeer(address net.Addr) netip.Addr {
+	if peer, ok := address.(*net.UDPAddr); ok {
+		return peer.AddrPort().Addr()
+	}
+
+	if peer, ok := address.(*net.TCPAddr); ok {
+		return peer.AddrPort().Addr()
+	}
+
+	return netip.Addr{}
+}
+
+func directHTTPPeer(request *http.Request) netip.Addr {
+	// A local proxy is not proof that its client is local. Forwarding headers
+	// only disable the override; their values never establish local origin.
+	for name := range request.Header {
+		if strings.EqualFold(name, "Forwarded") || strings.EqualFold(name, "X-Real-IP") || strings.EqualFold(name, "Via") {
+			return netip.Addr{}
+		}
+
+		if len(name) >= len("X-Forwarded-") && strings.EqualFold(name[:len("X-Forwarded-")], "X-Forwarded-") {
+			return netip.Addr{}
+		}
+	}
+
+	peer, err := netip.ParseAddrPort(request.RemoteAddr)
+	if err != nil {
+		return netip.Addr{}
+	}
+
+	return peer.Addr()
 }
