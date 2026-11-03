@@ -220,7 +220,7 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
 	local, zoneMatched, err := s.storage.LookupDNS(r)
 	if zoneMatched {
 		if err != nil {
-			log.Warnf("DNS authoritative response failed: %v", err)
+			log.Warnf("DNS authoritative response failed: %v\n", err)
 
 			msg.Rcode = dns.RcodeServerFailure
 
@@ -240,7 +240,7 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
 			return in
 		}
 
-		log.Warnf("DNS fallback resolver (https) error: %v", err)
+		log.Warnf("DNS fallback resolver (https) error: %v\n", err)
 	} else if s.fallbackIP != "" {
 		in, _, err := s.dnsClient.Exchange(r, s.fallbackIP)
 		if err == nil {
@@ -249,7 +249,7 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
 			return in
 		}
 
-		log.Warnf("DNS fallback resolver (ip) error: %v", err)
+		log.Warnf("DNS fallback resolver (ip) error: %v\n", err)
 	}
 
 	msg.Rcode = dns.RcodeNameError
