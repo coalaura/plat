@@ -40,6 +40,8 @@ dns:
   enabled: true
   # dns server port (default: 531)
   port: 531
+  # allow ANY queries (default: false)
+  allow_any_query: false
   # optional hostname reserved for DoH; all other HTTP requests on this host are rejected
   domain: ""
   # optional ip fallback resolver for unknown queries (default: "9.9.9.9")
@@ -52,9 +54,11 @@ Set `dns.domain` to a hostname such as `dns.example.com` (without a scheme, port
 
 Matching uses the HTTP `Host` header, ignoring case, an optional port and a trailing dot. It matches only the configured hostname, not its subdomains. When using a reverse proxy, preserve the original `Host` header; `Forwarded` and `X-Forwarded-Host` do not override it. Use another hostname for the panel and for slave `master.address` replication URLs.
 
+Both nodes refuse ANY queries by default over DNS and DoH, including queries for local zones and the local hostname. Set `dns.allow_any_query: true` on a node to allow them. Forwarded responses use a per-node LRU cache capped at 10,000 entries and 32 MiB of response data, with decreasing TTLs and SOA-based negative caching. Local answers take precedence and are not cached. Concurrent identical forwarded queries share one upstream request; upstream failures suppress repeat attempts for that query for one second. Client-specific EDNS options (including ECS and cookies), signed requests and transfers bypass caching and coalescing.
+
 ### Resolving the local hostname
 
-Both master and slave automatically resolve their own OS hostname for queries whose source address is loopback or one of that machine's interface addresses. Matching ignores case and a trailing dot and uses the exact OS hostname, without adding short-name or domain aliases. Local queries take precedence over stored zones and fallback resolvers: A returns `127.0.0.1`, AAAA returns `::1`, ANY returns both and other record types return an empty successful response. These synthetic answers are unsigned and have a zero TTL. Other callers use normal zone and fallback resolution.
+Both master and slave automatically resolve their own OS hostname for queries whose source address is loopback or one of that machine's interface addresses. Matching ignores case and a trailing dot and uses the exact OS hostname, without adding short-name or domain aliases. Local queries take precedence over stored zones and fallback resolvers: A returns `127.0.0.1`, AAAA returns `::1`, ANY returns both when enabled and other record types return an empty successful response. These synthetic answers are unsigned and have a zero TTL. Other callers use normal zone and fallback resolution.
 
 This applies to UDP/TCP DNS and direct DoH requests. DoH requests containing `Forwarded`, any `X-Forwarded-*` header, `X-Real-IP` or `Via` use normal resolution, regardless of header values. A reverse proxy must set a forwarding header on every request (for example, nginx `proxy_set_header X-Forwarded-For $remote_addr;`), because a local proxy that sends no forwarding headers is indistinguishable from a direct local client. Source-address checks identify the immediate DNS client; a local DNS forwarder also appears local.
 

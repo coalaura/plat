@@ -103,11 +103,12 @@ func (e *Config) Store() error {
 		"$.cloudflare":       {yaml.FootComment()},
 		"$.cloudflare.token": {yaml.HeadComment(" optional cloudflare api token; leave empty to run plat on its own")},
 
-		"$.dns.enabled":        {yaml.HeadComment(fmt.Sprintf(" enable built-in dns server (default: %v)", def.DNS.Enabled))},
-		"$.dns.port":           {yaml.HeadComment(fmt.Sprintf(" dns server port (default: %v)", def.DNS.Port))},
-		"$.dns.domain":         {yaml.HeadComment(" optional hostname reserved for DoH; all other HTTP requests on this host are rejected")},
-		"$.dns.fallback_ip":    {yaml.HeadComment(fmt.Sprintf(" optional ip fallback resolver for unknown queries (default: %q)", def.DNS.FallbackIP))},
-		"$.dns.fallback_https": {yaml.HeadComment(fmt.Sprintf(" optional DoH (DNS-over-HTTPS) fallback resolver (default: %q)", def.DNS.FallbackHTTPS))},
+		"$.dns.enabled":         {yaml.HeadComment(fmt.Sprintf(" enable built-in dns server (default: %v)", def.DNS.Enabled))},
+		"$.dns.port":            {yaml.HeadComment(fmt.Sprintf(" dns server port (default: %v)", def.DNS.Port))},
+		"$.dns.allow_any_query": {yaml.HeadComment(" allow ANY queries; disabled by default to limit amplification")},
+		"$.dns.domain":          {yaml.HeadComment(" optional hostname reserved for DoH; all other HTTP requests on this host are rejected")},
+		"$.dns.fallback_ip":     {yaml.HeadComment(fmt.Sprintf(" optional ip fallback resolver for unknown queries (default: %q)", def.DNS.FallbackIP))},
+		"$.dns.fallback_https":  {yaml.HeadComment(fmt.Sprintf(" optional DoH (DNS-over-HTTPS) fallback resolver (default: %q)", def.DNS.FallbackHTTPS))},
 	}
 
 	file, err := OpenFileForWriting("config.yml")

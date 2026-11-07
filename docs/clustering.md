@@ -58,6 +58,7 @@ master:
 dns:
   enabled: true
   port: 53
+  allow_any_query: false
   fallback_ip: "9.9.9.9"
   fallback_https: "https://dns.quad9.net/dns-query"
 http:

@@ -22,6 +22,7 @@ const dohTimeout = 8 * time.Second
 type Config struct {
 	Enabled       bool   `yaml:"enabled"`
 	Port          int    `yaml:"port"`
+	AllowANYQuery bool   `yaml:"allow_any_query"`
 	FallbackIP    string `yaml:"fallback_ip"`
 	FallbackHTTPS string `yaml:"fallback_https"`
 }
@@ -37,6 +38,8 @@ type DNSServer struct {
 
 	storage   Storage
 	localHost localHost
+	allowANY  bool
+	forward   forwardState
 
 	fallbackIP string
 	dnsClient  *dns.Client
@@ -118,6 +121,7 @@ func NewDNSServer(config Config, storage Storage) *DNSServer {
 	server := &DNSServer{
 		storage:   storage,
 		localHost: newLocalHost(),
+		allowANY:  config.AllowANYQuery,
 		errors:    make(chan error, 2),
 
 		fallbackIP: config.FallbackIP,
@@ -159,6 +163,8 @@ func (r *DoHRequest) Unpack() (*dns.Msg, error) {
 }
 
 func (s *DNSServer) Close() {
+	s.forward.close()
+
 	if s.udp != nil {
 		s.udp.Shutdown()
 	}
@@ -218,6 +224,13 @@ func (s *DNSServer) ProcessQuery(ctx context.Context, r *dns.Msg, peer netip.Add
 		return msg
 	}
 
+	if r.Question[0].Qtype == dns.TypeANY && !s.allowANY {
+		msg.Authoritative = false
+		msg.Rcode = dns.RcodeRefused
+
+		return msg
+	}
+
 	if s.localHost.answer(r, msg, peer) {
 		return msg
 	}
@@ -237,27 +250,12 @@ func (s *DNSServer) ProcessQuery(ctx context.Context, r *dns.Msg, peer netip.Add
 
 	msg.Authoritative = false
 
-	if s.fallbackHTTPS != "" {
-		in, err := s.ExchangeDoH(ctx, r)
-		if err == nil {
-			in.Id = r.Id
-
-			return in
-		}
-
-		log.Warnf("DNS fallback resolver (https) error: %v\n", err)
-	} else if s.fallbackIP != "" {
-		in, _, err := s.dnsClient.ExchangeContext(ctx, r, s.fallbackIP)
-		if err == nil {
-			in.Id = r.Id
-
-			return in
-		}
-
-		log.Warnf("DNS fallback resolver (ip) error: %v\n", err)
-	}
-
 	if s.fallbackIP != "" || s.fallbackHTTPS != "" {
+		in, err := s.forwardQuery(ctx, r)
+		if err == nil {
+			return in
+		}
+
 		msg.Rcode = dns.RcodeServerFailure
 	} else {
 		msg.Rcode = dns.RcodeNameError
@@ -383,9 +381,13 @@ func (s *DNSServer) ExchangeDoH(ctx context.Context, r *dns.Msg) (*dns.Msg, erro
 		return nil, fmt.Errorf("DoH responder returned status: %s", resp.Status)
 	}
 
-	respBytes, err := io.ReadAll(resp.Body)
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, dns.MaxMsgSize+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read DoH response body: %w", err)
+	}
+
+	if len(respBytes) > dns.MaxMsgSize {
+		return nil, errors.New("DoH response exceeds maximum DNS message size")
 	}
 
 	respMsg := new(dns.Msg)
