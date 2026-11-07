@@ -2,6 +2,7 @@ package dnsserver
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -15,6 +16,8 @@ import (
 	"github.com/coalaura/plain"
 	"github.com/miekg/dns"
 )
+
+const dohTimeout = 8 * time.Second
 
 type Config struct {
 	Enabled       bool   `yaml:"enabled"`
@@ -43,6 +46,7 @@ type DNSServer struct {
 }
 
 type DoHRequest struct {
+	ctx  context.Context
 	body []byte
 	peer netip.Addr
 }
@@ -51,7 +55,7 @@ var log = plain.New(plain.WithDate(plain.RFC3339Local))
 
 func NewDoHHTTPClient() *http.Client {
 	return &http.Client{
-		Timeout: 8 * time.Second,
+		Timeout: dohTimeout,
 		Transport: &http.Transport{
 			Proxy: http.ProxyFromEnvironment,
 			DialContext: (&net.Dialer{
@@ -102,6 +106,7 @@ func NewDoHRequest(r *http.Request) (*DoHRequest, error) {
 	}
 
 	return &DoHRequest{
+		ctx:  r.Context(),
 		body: body,
 		peer: directHTTPPeer(r),
 	}, nil
@@ -174,7 +179,7 @@ func (s *DNSServer) serve(server *dns.Server) {
 	}
 }
 
-func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
+func (s *DNSServer) ProcessQuery(ctx context.Context, r *dns.Msg, peer netip.Addr) *dns.Msg {
 	msg := new(dns.Msg)
 
 	msg.SetReply(r)
@@ -233,7 +238,7 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
 	msg.Authoritative = false
 
 	if s.fallbackHTTPS != "" {
-		in, err := s.ExchangeDoH(r)
+		in, err := s.ExchangeDoH(ctx, r)
 		if err == nil {
 			in.Id = r.Id
 
@@ -242,7 +247,7 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
 
 		log.Warnf("DNS fallback resolver (https) error: %v\n", err)
 	} else if s.fallbackIP != "" {
-		in, _, err := s.dnsClient.Exchange(r, s.fallbackIP)
+		in, _, err := s.dnsClient.ExchangeContext(ctx, r, s.fallbackIP)
 		if err == nil {
 			in.Id = r.Id
 
@@ -252,13 +257,17 @@ func (s *DNSServer) ProcessQuery(r *dns.Msg, peer netip.Addr) *dns.Msg {
 		log.Warnf("DNS fallback resolver (ip) error: %v\n", err)
 	}
 
-	msg.Rcode = dns.RcodeNameError
+	if s.fallbackIP != "" || s.fallbackHTTPS != "" {
+		msg.Rcode = dns.RcodeServerFailure
+	} else {
+		msg.Rcode = dns.RcodeNameError
+	}
 
 	return msg
 }
 
 func (s *DNSServer) HandleDNSMessage(w dns.ResponseWriter, r *dns.Msg) {
-	resp := s.ProcessQuery(r, dnsPeer(w.RemoteAddr()))
+	resp := s.ProcessQuery(context.Background(), r, dnsPeer(w.RemoteAddr()))
 
 	if _, udp := w.RemoteAddr().(*net.UDPAddr); udp {
 		size := 512
@@ -282,7 +291,7 @@ func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DoHRequest) {
 		return
 	}
 
-	resp := s.ProcessQuery(msg, r.peer)
+	resp := s.ProcessQuery(r.ctx, msg, r.peer)
 
 	resp.Id = 0
 
@@ -300,7 +309,11 @@ func (s *DNSServer) HandleDoH(w http.ResponseWriter, r *DoHRequest) {
 	w.Write(respBytes)
 }
 
-func (s *DNSServer) ExchangeDoH(r *dns.Msg) (*dns.Msg, error) {
+func (s *DNSServer) ExchangeDoH(ctx context.Context, r *dns.Msg) (*dns.Msg, error) {
+	// Bound the entire exchange, including retries and body reads, to one budget.
+	ctx, cancel := context.WithTimeout(ctx, dohTimeout)
+	defer cancel()
+
 	reqBytes, err := r.Pack()
 	if err != nil {
 		return nil, fmt.Errorf("failed to pack dns query: %w", err)
@@ -309,6 +322,10 @@ func (s *DNSServer) ExchangeDoH(r *dns.Msg) (*dns.Msg, error) {
 	var resp *http.Response
 
 	for i := range 3 {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		var req *http.Request
 
 		if len(reqBytes) <= 512 {
@@ -322,14 +339,17 @@ func (s *DNSServer) ExchangeDoH(r *dns.Msg) (*dns.Msg, error) {
 
 			url := s.fallbackHTTPS + sep + "dns=" + b64
 
-			req, err = http.NewRequest(http.MethodGet, url, nil)
+			req, err = http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		} else {
-			req, err = http.NewRequest(http.MethodPost, s.fallbackHTTPS, bytes.NewReader(reqBytes))
-			req.Header.Set("Content-Type", "application/dns-message")
+			req, err = http.NewRequestWithContext(ctx, http.MethodPost, s.fallbackHTTPS, bytes.NewReader(reqBytes))
 		}
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create DoH request: %w", err)
+		}
+
+		if req.Method == http.MethodPost {
+			req.Header.Set("Content-Type", "application/dns-message")
 		}
 
 		req.Header.Set("Accept", "application/dns-message")
@@ -341,7 +361,15 @@ func (s *DNSServer) ExchangeDoH(r *dns.Msg) (*dns.Msg, error) {
 		}
 
 		if i < 2 {
-			time.Sleep(50 * time.Millisecond)
+			timer := time.NewTimer(50 * time.Millisecond)
+
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 
 			continue
 		}

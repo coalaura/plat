@@ -114,7 +114,7 @@ func run(ctx context.Context) error {
 		httpErrors <- server.ListenAndServe()
 	}()
 
-	log.Printf("Serving DNS on :%d and DoH over HTTP on %s/dns-query\n", config.DNS.Port, config.HTTP.Address)
+	log.Printf("Serving DNS on :%d and DoH over HTTP on %s\n", config.DNS.Port, config.HTTP.Address)
 
 	select {
 	case <-ctx.Done():
@@ -130,7 +130,7 @@ func run(ctx context.Context) error {
 
 func dohHandler(server *dnsserver.DNSServer) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/dns-query" {
+		if request.URL.Path != "/" && request.URL.Path != "/dns-query" {
 			http.NotFound(writer, request)
 
 			return

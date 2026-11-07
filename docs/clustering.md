@@ -66,11 +66,11 @@ http:
 
 The `master.tls` paths and `master.trusted_master` are optional and default to the values shown. If overriding identity paths, set both `certificate` and `key`; plat still generates the identity when both files are absent.
 
-Expose both UDP and TCP port 53 and let nginx serve public HTTPS on port 443, proxying `/dns-query` to the slave's HTTP listener on port 8080. Unknown queries use the Quad9 fallbacks by default; empty fallback values disable recursion. Configure delegation, glue and parent DS records as described in the main DNSSEC documentation. Slaves sign locally with the replicated keys, refresh derived signatures independently and retain master-controlled SOA serials. Cloudflare-signed zones retain their authoritative forwarding behavior.
+Expose both UDP and TCP port 53 and let nginx serve public HTTPS on port 443, proxying `/` and `/dns-query` to the slave's HTTP listener on port 8080. Unknown queries use the Quad9 fallbacks by default; empty fallback values disable recursion. Configure delegation, glue and parent DS records as described in the main DNSSEC documentation. Slaves sign locally with the replicated keys, refresh derived signatures independently and retain master-controlled SOA serials. Cloudflare-signed zones retain their authoritative forwarding behavior.
 
 ### DoH reverse proxy
 
-The slave serves `/dns-query` over plain HTTP at `http.address` (default `:8080`). Configure nginx to terminate TLS with the public DoH certificate and forward requests to `http://<slave-address>:8080/dns-query`, preserving the query string and request body. DoH clients continue to use the public `https://dns.example.net/dns-query` URL.
+The slave serves DoH GET and POST requests at both `/` and `/dns-query` over plain HTTP at `http.address` (default `:8080`). Configure nginx to terminate TLS with the public DoH certificate and forward both paths to `http://<slave-address>:8080`, preserving the path, query string and request body. DoH clients can use either `https://dns.example.net/` or `https://dns.example.net/dns-query`.
 
 Set `proxy_set_header X-Forwarded-For $remote_addr;` on every proxied request so the slave can distinguish proxied traffic from direct local clients. Requests carrying forwarding headers use normal DNS resolution; direct local clients can resolve the slave's own OS hostname to loopback addresses as described in [local hostname resolution](../README.md#resolving-the-local-hostname).
 
