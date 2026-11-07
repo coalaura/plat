@@ -97,9 +97,13 @@ func run(ctx context.Context) error {
 	dns := dnsserver.NewDNSServer(config.DNS, data)
 	defer dns.Close()
 
+	handler := dohHandler(dns)
+	handler = plain.RealIPMiddleware()(handler)
+	handler = log.Middleware()(handler)
+
 	server := &http.Server{
 		Addr:              config.HTTP.Address,
-		Handler:           log.Middleware()(dohHandler(dns)),
+		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

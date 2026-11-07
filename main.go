@@ -61,6 +61,7 @@ func main() {
 	r := chi.NewRouter()
 
 	r.Use(middleware.Recoverer)
+	r.Use(plain.RealIPMiddleware())
 	r.Use(log.Middleware())
 
 	r.Use(HandleDNSRequests(config.DNS.Domain, dns))
